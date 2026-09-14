@@ -300,7 +300,12 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         entity_category=EntityCategory.DIAGNOSTIC,
         # Raw register value: not watts and not a universally scaled percentage.
         value_fn=lambda d: _as_float(
-            pick(d.status, "limits.charge_rate", "limits.charge")
+            pick(
+                d.status,
+                "limits.charge_rate_raw",
+                "limits.charge_rate",
+                "limits.charge",
+            )
         ),
     ),
     HemSensorDescription(
@@ -310,7 +315,12 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         value_fn=lambda d: _as_float(
-            pick(d.status, "limits.discharge_rate", "limits.discharge")
+            pick(
+                d.status,
+                "limits.discharge_rate_raw",
+                "limits.discharge_rate",
+                "limits.discharge",
+            )
         ),
     ),
 )
@@ -477,6 +487,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_solar_kwh",
                 "today.solar_energy",
                 "today.solar",
                 "energy_today.solar",
@@ -495,6 +506,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_import_kwh",
                 "today.grid_import",
                 "today.import",
                 "energy_today.grid_import",
@@ -513,6 +525,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_export_kwh",
                 "today.grid_export",
                 "today.export",
                 "energy_today.grid_export",
@@ -531,6 +544,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_charge_kwh",
                 "today.battery_charge",
                 "today.charge",
                 "energy_today.battery_charge",
@@ -549,6 +563,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_discharge_kwh",
                 "today.battery_discharge",
                 "today.discharge",
                 "energy_today.battery_discharge",
@@ -567,6 +582,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         value_fn=lambda d: _as_float(
             pick(
                 d.snapshot,
+                "today_consumption_kwh",
                 "today.home_consumption",
                 "today.consumption",
                 "today.load",
