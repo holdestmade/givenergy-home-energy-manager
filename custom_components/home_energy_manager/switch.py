@@ -7,13 +7,13 @@ integration's options, which mirrors HEM's own default-off control permission.
 from __future__ import annotations
 
 import logging
+import time
 from typing import Any
 
 from homeassistant.components.switch import SwitchEntity
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
-from homeassistant.util import dt as dt_util
 
 from .const import ACTION_CHARGE, ACTION_DISCHARGE, CONF_ENABLE_CONTROLS
 from .coordinator import HemCoordinator, quick_action_matches
@@ -61,27 +61,25 @@ class HemForceSwitch(HemEntity, SwitchEntity):
     @property
     def is_on(self) -> bool | None:
         """Return whether HEM reports this force action as running."""
-        reported = quick_action_matches(self.status, self._action)
-        if self._optimistic is not None:
-            if dt_util.utcnow().timestamp() < self._optimistic_until:
-                return self._optimistic
-            # Window elapsed: fall back to whatever HEM says.
-            self._optimistic = None
-        return reported
+        if self._optimistic is not None and time.monotonic() < self._optimistic_until:
+            return self._optimistic
+        return quick_action_matches(self.status, self._action)
 
     @callback
     def _handle_coordinator_update(self) -> None:
-        """Drop the optimistic value as soon as HEM agrees with it."""
-        if self._optimistic is not None and quick_action_matches(
-            self.status, self._action
-        ) == self._optimistic:
+        """Drop the optimistic value once HEM agrees, or once it has expired."""
+        if self._optimistic is not None and (
+            time.monotonic() >= self._optimistic_until
+            or quick_action_matches(self.status, self._action) == self._optimistic
+        ):
             self._optimistic = None
         super()._handle_coordinator_update()
 
     def _set_optimistic(self, value: bool) -> None:
         """Hold a value briefly: acceptance is not inverter confirmation."""
         self._optimistic = value
-        self._optimistic_until = dt_util.utcnow().timestamp() + OPTIMISTIC_SECONDS
+        # Monotonic, so a clock change cannot strand the switch on a stale value.
+        self._optimistic_until = time.monotonic() + OPTIMISTIC_SECONDS
         self.async_write_ha_state()
 
     async def async_turn_on(self, **kwargs: Any) -> None:

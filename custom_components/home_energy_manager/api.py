@@ -17,7 +17,6 @@ client never retries a mutation on its own.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from typing import Any
@@ -44,6 +43,10 @@ class HemAuthError(HemError):
 
 class HemPermissionError(HemError):
     """HTTP 403 - battery control through the API is switched off."""
+
+
+class HemNotFoundError(HemError):
+    """HTTP 404 - the endpoint or command id does not exist on this install."""
 
 
 class HemConflictError(HemError):
@@ -116,27 +119,36 @@ class HomeEnergyManagerApi:
                 payload = await response.json(content_type=None)
             except ValueError:
                 payload = {"error": (await response.text())[:200]}
-        except asyncio.TimeoutError as err:
-            raise HemConnectionError(f"Timeout talking to {self.base_url}{path}") from err
+        except TimeoutError as err:
+            raise HemConnectionError(
+                f"Timeout talking to {self.base_url}{path}"
+            ) from err
         except ClientError as err:
-            raise HemConnectionError(f"Cannot reach {self.base_url}{path}: {err}") from err
+            raise HemConnectionError(
+                f"Cannot reach {self.base_url}{path}: {err}"
+            ) from err
 
         if not isinstance(payload, dict):
             payload = {"data": payload}
 
         status = response.status
-        message = str(payload.get("error") or payload.get("message") or f"HTTP {status}")
+        message = str(
+            payload.get("error") or payload.get("message") or f"HTTP {status}"
+        )
 
         if status == 401:
             raise HemAuthError(message)
         if status == 403:
             raise HemPermissionError(message)
+        if status == 404:
+            raise HemNotFoundError(message)
         if status == 409:
             raise HemConflictError(message, payload.get("command_id"))
         if status == 429:
             retry_after = response.headers.get("Retry-After")
             raise HemRateLimitError(
-                message, int(retry_after) if retry_after and retry_after.isdigit() else None
+                message,
+                int(retry_after) if retry_after and retry_after.isdigit() else None,
             )
         if status >= 400:
             raise HemResponseError(f"HTTP {status}: {message}")
@@ -159,7 +171,9 @@ class HomeEnergyManagerApi:
 
     # --- mutations -----------------------------------------------------------
 
-    async def async_force_charge(self, minutes: int, idempotency_key: str) -> dict[str, Any]:
+    async def async_force_charge(
+        self, minutes: int, idempotency_key: str
+    ) -> dict[str, Any]:
         """Start Force Charge for the given whole number of minutes."""
         return await self._request(
             "POST",
@@ -174,7 +188,9 @@ class HomeEnergyManagerApi:
             "POST", "/api/control/force-charge/stop", idempotency_key=idempotency_key
         )
 
-    async def async_force_discharge(self, minutes: int, idempotency_key: str) -> dict[str, Any]:
+    async def async_force_discharge(
+        self, minutes: int, idempotency_key: str
+    ) -> dict[str, Any]:
         """Start Force Discharge (a forced export) for the given minutes."""
         return await self._request(
             "POST",

@@ -41,7 +41,7 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_STATE_LENGTH = 255
 
-# CHANGED: words that must not be sentence-cased into "Soc", "Pv" and so on.
+# Words that must not be sentence-cased into "Soc", "Pv" and so on.
 ACRONYMS = {
     "soc": "SOC",
     "pv": "PV",
@@ -74,7 +74,7 @@ def _as_text(value: Any) -> str | None:
 
 
 def _pretty(value: Any) -> str | None:
-    """CHANGED: format an API token as sentence case, matching HA's own states.
+    """Format an API token as sentence case, matching HA's own states.
 
     HEM returns machine tokens like `connected`, `eco_paused` and
     `readback_confirmed`, while Home Assistant renders its binary sensors as
@@ -134,25 +134,25 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="mode",
         translation_key="mode",
         icon="mdi:home-lightning-bolt-outline",
-        value_fn=lambda d: _pretty(d.status.get("mode")),  # CHANGED
+        value_fn=lambda d: _pretty(d.status.get("mode")),
     ),
     HemSensorDescription(
         key="activity",
         translation_key="activity",
         icon="mdi:battery-sync-outline",
-        value_fn=lambda d: _pretty(d.status.get("activity")),  # CHANGED
+        value_fn=lambda d: _pretty(d.status.get("activity")),
     ),
     HemSensorDescription(
         key="control_source",
         translation_key="control_source",
         icon="mdi:account-cog-outline",
-        value_fn=lambda d: _pretty(d.status.get("control_source")),  # CHANGED
+        value_fn=lambda d: _pretty(d.status.get("control_source")),
     ),
     HemSensorDescription(
         key="control_phase",
         translation_key="control_phase",
         icon="mdi:progress-clock",
-        value_fn=lambda d: _pretty(d.status.get("control_phase")),  # CHANGED
+        value_fn=lambda d: _pretty(d.status.get("control_phase")),
     ),
     HemSensorDescription(
         key="remaining_minutes",
@@ -167,9 +167,7 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="quick_action",
         translation_key="quick_action",
         icon="mdi:flash-outline",
-        value_fn=lambda d: _pretty(  # CHANGED
-            pick(d.status, "quick_action.action") or "none"
-        ),
+        value_fn=lambda d: _pretty(pick(d.status, "quick_action.action") or "none"),
     ),
     HemSensorDescription(
         key="quick_action_ends_at",
@@ -181,27 +179,25 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="schedule_charge",
         translation_key="schedule_charge",
         icon="mdi:calendar-arrow-right",
-        value_fn=lambda d: _pretty(pick(d.status, "schedules.charge")),  # CHANGED
+        value_fn=lambda d: _pretty(pick(d.status, "schedules.charge")),
     ),
     HemSensorDescription(
         key="schedule_export",
         translation_key="schedule_export",
         icon="mdi:calendar-export",
-        value_fn=lambda d: _pretty(pick(d.status, "schedules.export")),  # CHANGED
+        value_fn=lambda d: _pretty(pick(d.status, "schedules.export")),
     ),
     HemSensorDescription(
         key="schedule_demand_discharge",
         translation_key="schedule_demand_discharge",
         icon="mdi:calendar-arrow-left",
-        value_fn=lambda d: _pretty(  # CHANGED
-            pick(d.status, "schedules.demand_discharge")
-        ),
+        value_fn=lambda d: _pretty(pick(d.status, "schedules.demand_discharge")),
     ),
     HemSensorDescription(
         key="charging_mode",
         translation_key="charging_mode",
         icon="mdi:tune-variant",
-        value_fn=lambda d: _pretty(pick(d.status, "automation.charging_mode")),  # CHANGED
+        value_fn=lambda d: _pretty(pick(d.status, "automation.charging_mode")),
     ),
     HemSensorDescription(
         key="condition_count",
@@ -214,8 +210,8 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="conditions",
         translation_key="conditions",
         icon="mdi:format-list-bulleted",
-        # CHANGED: joins the human labels, which HEM already supplies properly
-        # cased. The raw codes moved to their own sensor below.
+        # Joins the human labels, which HEM already supplies properly cased.
+        # The raw codes live on their own sensor below.
         value_fn=lambda d: _as_text(
             ", ".join(
                 str(c.get("label"))
@@ -230,8 +226,8 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         translation_key="condition_codes",
         icon="mdi:code-braces",
         entity_category=EntityCategory.DIAGNOSTIC,
-        # NEW: deliberately left raw and lowercase. Codes are the stable thing
-        # to write automations against, so they must not be reformatted.
+        # Deliberately left raw and lowercase. Codes are the stable thing to
+        # write automations against, so they must not be reformatted.
         value_fn=lambda d: _as_text(
             ", ".join(
                 str(c.get("code"))
@@ -245,7 +241,7 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="connection",
         translation_key="connection",
         icon="mdi:lan-connect",
-        value_fn=lambda d: _pretty(d.status.get("connection")),  # CHANGED
+        value_fn=lambda d: _pretty(d.status.get("connection")),
     ),
     HemSensorDescription(
         key="observed_at",
@@ -278,7 +274,12 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: _as_float(
-            pick(d.status, "limits.reserve_soc", "limits.reserve", "limits.battery_reserve")
+            pick(
+                d.status,
+                "limits.reserve_soc",
+                "limits.reserve",
+                "limits.battery_reserve",
+            )
         ),
     ),
     HemSensorDescription(
@@ -298,7 +299,9 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         # Raw register value: not watts and not a universally scaled percentage.
-        value_fn=lambda d: _as_float(pick(d.status, "limits.charge_rate", "limits.charge")),
+        value_fn=lambda d: _as_float(
+            pick(d.status, "limits.charge_rate", "limits.charge")
+        ),
     ),
     HemSensorDescription(
         key="discharge_rate",
@@ -347,7 +350,14 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: _as_float(
-            pick(d.snapshot, "solar_power", "pv_power", "power.solar", "solar.power", "solar_w")
+            pick(
+                d.snapshot,
+                "solar_power",
+                "pv_power",
+                "power.solar",
+                "solar.power",
+                "solar_w",
+            )
         ),
     ),
     HemSensorDescription(
@@ -358,7 +368,13 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
         value_fn=lambda d: _as_float(
-            pick(d.snapshot, "battery_power", "power.battery", "battery.power", "battery_w")
+            pick(
+                d.snapshot,
+                "battery_power",
+                "power.battery",
+                "battery.power",
+                "battery_w",
+            )
         ),
     ),
     HemSensorDescription(
@@ -593,7 +609,8 @@ async def async_setup_entry(
 
     if missing:
         _LOGGER.debug(
-            "Skipping snapshot sensors with no matching key: %s. Snapshot keys seen: %s",
+            "Skipping snapshot sensors with no matching key: %s. "
+            "Snapshot keys seen: %s",
             ", ".join(missing),
             sorted(data.snapshot) if data.snapshot else "(none)",
         )
@@ -607,7 +624,9 @@ class HemSensor(HemEntity, SensorEntity):
 
     entity_description: HemSensorDescription
 
-    def __init__(self, coordinator: HemCoordinator, description: HemSensorDescription) -> None:
+    def __init__(
+        self, coordinator: HemCoordinator, description: HemSensorDescription
+    ) -> None:
         """Store the description."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
@@ -634,7 +653,7 @@ class HemLastCommandSensor(HemEntity, SensorEntity):
     @property
     def native_value(self) -> str | None:
         """Return Accepted / Queued / Dispatched / Readback confirmed / Failed."""
-        return _pretty(self.coordinator.last_command_state)  # CHANGED
+        return _pretty(self.coordinator.last_command_state)
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
