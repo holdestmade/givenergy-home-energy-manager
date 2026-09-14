@@ -41,6 +41,17 @@ _LOGGER = logging.getLogger(__name__)
 
 MAX_STATE_LENGTH = 255
 
+# CHANGED: words that must not be sentence-cased into "Soc", "Pv" and so on.
+ACRONYMS = {
+    "soc": "SOC",
+    "pv": "PV",
+    "ct": "CT",
+    "hem": "HEM",
+    "ac": "AC",
+    "dc": "DC",
+    "ev": "EV",
+}
+
 
 def _as_float(value: Any) -> float | None:
     """Coerce API numbers (which may arrive as strings) to float."""
@@ -53,10 +64,42 @@ def _as_float(value: Any) -> float | None:
 
 
 def _as_text(value: Any) -> str | None:
-    """Coerce to a string that fits in a state."""
+    """Coerce to a string that fits in a state, unchanged.
+
+    Used only where HEM already returns human-facing prose.
+    """
     if value is None:
         return None
     return str(value)[:MAX_STATE_LENGTH]
+
+
+def _pretty(value: Any) -> str | None:
+    """CHANGED: format an API token as sentence case, matching HA's own states.
+
+    HEM returns machine tokens like `connected`, `eco_paused` and
+    `readback_confirmed`, while Home Assistant renders its binary sensors as
+    `On`, `Off` and `Connected`. Passing every enum-ish value through here makes
+    the whole device read consistently: `Connected`, `Eco paused`,
+    `Readback confirmed`, `Off`.
+
+    Unrecognised values are handled gracefully, which the HEM docs specifically
+    ask for. That is why this is preferred over SensorDeviceClass.ENUM, which
+    logs an error whenever the API returns a value outside a fixed options list.
+
+    Note: automations that matched the old raw states (state == 'eco') need
+    updating to the formatted form (state == 'Eco'), or should use the binary
+    sensors instead, which are unaffected.
+    """
+    if value is None:
+        return None
+    text = str(value).replace("_", " ").replace("-", " ").strip()
+    if not text:
+        return None
+    words = [ACRONYMS.get(word.lower(), word) for word in text.split()]
+    joined = " ".join(words)
+    # Capitalise the first character only; anything already upper (an acronym,
+    # or a proper noun from the API) is left as it is.
+    return (joined[0].upper() + joined[1:])[:MAX_STATE_LENGTH]
 
 
 def _as_timestamp(value: Any) -> datetime | None:
@@ -83,32 +126,33 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="summary",
         translation_key="summary",
         icon="mdi:text-short",
-        # Display only - the HEM docs warn not to parse this wording.
+        # Left verbatim: already a human sentence, and the HEM docs warn not to
+        # parse its wording.
         value_fn=lambda d: _as_text(d.status.get("summary")),
     ),
     HemSensorDescription(
         key="mode",
         translation_key="mode",
         icon="mdi:home-lightning-bolt-outline",
-        value_fn=lambda d: _as_text(d.status.get("mode")),
+        value_fn=lambda d: _pretty(d.status.get("mode")),  # CHANGED
     ),
     HemSensorDescription(
         key="activity",
         translation_key="activity",
         icon="mdi:battery-sync-outline",
-        value_fn=lambda d: _as_text(d.status.get("activity")),
+        value_fn=lambda d: _pretty(d.status.get("activity")),  # CHANGED
     ),
     HemSensorDescription(
         key="control_source",
         translation_key="control_source",
         icon="mdi:account-cog-outline",
-        value_fn=lambda d: _as_text(d.status.get("control_source")),
+        value_fn=lambda d: _pretty(d.status.get("control_source")),  # CHANGED
     ),
     HemSensorDescription(
         key="control_phase",
         translation_key="control_phase",
         icon="mdi:progress-clock",
-        value_fn=lambda d: _as_text(d.status.get("control_phase")),
+        value_fn=lambda d: _pretty(d.status.get("control_phase")),  # CHANGED
     ),
     HemSensorDescription(
         key="remaining_minutes",
@@ -123,7 +167,9 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="quick_action",
         translation_key="quick_action",
         icon="mdi:flash-outline",
-        value_fn=lambda d: _as_text(pick(d.status, "quick_action.action") or "none"),
+        value_fn=lambda d: _pretty(  # CHANGED
+            pick(d.status, "quick_action.action") or "none"
+        ),
     ),
     HemSensorDescription(
         key="quick_action_ends_at",
@@ -135,25 +181,27 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="schedule_charge",
         translation_key="schedule_charge",
         icon="mdi:calendar-arrow-right",
-        value_fn=lambda d: _as_text(pick(d.status, "schedules.charge")),
+        value_fn=lambda d: _pretty(pick(d.status, "schedules.charge")),  # CHANGED
     ),
     HemSensorDescription(
         key="schedule_export",
         translation_key="schedule_export",
         icon="mdi:calendar-export",
-        value_fn=lambda d: _as_text(pick(d.status, "schedules.export")),
+        value_fn=lambda d: _pretty(pick(d.status, "schedules.export")),  # CHANGED
     ),
     HemSensorDescription(
         key="schedule_demand_discharge",
         translation_key="schedule_demand_discharge",
         icon="mdi:calendar-arrow-left",
-        value_fn=lambda d: _as_text(pick(d.status, "schedules.demand_discharge")),
+        value_fn=lambda d: _pretty(  # CHANGED
+            pick(d.status, "schedules.demand_discharge")
+        ),
     ),
     HemSensorDescription(
         key="charging_mode",
         translation_key="charging_mode",
         icon="mdi:tune-variant",
-        value_fn=lambda d: _as_text(pick(d.status, "automation.charging_mode")),
+        value_fn=lambda d: _pretty(pick(d.status, "automation.charging_mode")),  # CHANGED
     ),
     HemSensorDescription(
         key="condition_count",
@@ -166,12 +214,29 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="conditions",
         translation_key="conditions",
         icon="mdi:format-list-bulleted",
-        # Codes, not labels: codes are the stable thing to automate against.
+        # CHANGED: joins the human labels, which HEM already supplies properly
+        # cased. The raw codes moved to their own sensor below.
+        value_fn=lambda d: _as_text(
+            ", ".join(
+                str(c.get("label"))
+                for c in (d.status.get("conditions") or [])
+                if isinstance(c, dict) and c.get("label")
+            )
+            or "None"
+        ),
+    ),
+    HemSensorDescription(
+        key="condition_codes",
+        translation_key="condition_codes",
+        icon="mdi:code-braces",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # NEW: deliberately left raw and lowercase. Codes are the stable thing
+        # to write automations against, so they must not be reformatted.
         value_fn=lambda d: _as_text(
             ", ".join(
                 str(c.get("code"))
                 for c in (d.status.get("conditions") or [])
-                if isinstance(c, dict)
+                if isinstance(c, dict) and c.get("code")
             )
             or "none"
         ),
@@ -180,7 +245,7 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         key="connection",
         translation_key="connection",
         icon="mdi:lan-connect",
-        value_fn=lambda d: _as_text(d.status.get("connection")),
+        value_fn=lambda d: _pretty(d.status.get("connection")),  # CHANGED
     ),
     HemSensorDescription(
         key="observed_at",
@@ -568,13 +633,14 @@ class HemLastCommandSensor(HemEntity, SensorEntity):
 
     @property
     def native_value(self) -> str | None:
-        """Return accepted / queued / dispatched / readback_confirmed / failed."""
-        return self.coordinator.last_command_state
+        """Return Accepted / Queued / Dispatched / Readback confirmed / Failed."""
+        return _pretty(self.coordinator.last_command_state)  # CHANGED
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         """Expose the id and action so a failed command can be traced in HEM."""
         return {
             "command_id": self.coordinator.last_command_id,
+            # Raw token, so it matches HEM's own logs.
             "action": self.coordinator.last_command_action,
         }

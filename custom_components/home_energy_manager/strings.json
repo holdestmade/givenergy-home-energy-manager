@@ -74,6 +74,7 @@
       "charging_mode": { "name": "Charging mode" },
       "condition_count": { "name": "Condition count" },
       "conditions": { "name": "Conditions" },
+      "condition_codes": { "name": "Condition codes" },
       "connection": { "name": "Connection" },
       "observed_at": { "name": "Observed at" },
       "age_seconds": { "name": "Reading age" },
@@ -101,7 +102,7 @@
       "last_command_state": { "name": "Last command state" }
     },
     "binary_sensor": {
-      "connected": { "name": "Inverter connection" },
+      "connected": { "name": "Inverter online" },
       "stale": { "name": "Stale reading" },
       "status_unavailable": { "name": "Status unavailable" },
       "has_conditions": { "name": "Conditions present" },
