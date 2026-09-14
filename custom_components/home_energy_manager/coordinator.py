@@ -18,6 +18,7 @@ from .api import (
     HemAuthError,
     HemConflictError,
     HemError,
+    HemNotFoundError,
     HemPermissionError,
     HemRateLimitError,
     HomeEnergyManagerApi,
@@ -104,7 +105,9 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
 
         options = entry.options
         self._poll_snapshot: bool = options.get(CONF_POLL_SNAPSHOT, True)
-        self._confirm_timeout: int = options.get(CONF_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_TIMEOUT)
+        self._confirm_timeout: int = options.get(
+            CONF_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_TIMEOUT
+        )
 
         # Duration used by the switches; the number entity writes to this.
         self.force_minutes: int = options.get(CONF_FORCE_MINUTES, DEFAULT_FORCE_MINUTES)
@@ -145,10 +148,22 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
                 snapshot = await self.api.async_get_snapshot()
             except HemAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
-            except HemError as err:
-                # Keep the integration alive on status alone.
-                _LOGGER.warning("Snapshot unavailable, continuing on status only: %s", err)
+            except (HemNotFoundError, HemPermissionError) as err:
+                # This install does not serve /api/snapshot at all, so stop
+                # asking: retrying every cycle would only add load and log noise.
+                _LOGGER.warning(
+                    "HEM does not serve /api/snapshot (%s); continuing on status "
+                    "alone. Reload the entry to probe again",
+                    err,
+                )
                 self._snapshot_available = False
+            except HemError as err:
+                # Transient: a timeout, a rate limit or a 5xx. Hold the last
+                # good snapshot rather than blanking every snapshot sensor, and
+                # try again on the next poll.
+                _LOGGER.debug("Snapshot fetch failed, retrying next poll: %s", err)
+                if self.data is not None:
+                    snapshot = self.data.snapshot
 
         _LOGGER.debug("HEM status=%s snapshot=%s", status, snapshot)
         return HemData(status=status, snapshot=snapshot)
@@ -227,6 +242,11 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
             await asyncio.sleep(COMMAND_POLL_INTERVAL)
             try:
                 record = await self.api.async_get_command(command_id)
+            except (HemAuthError, HemNotFoundError) as err:
+                # Neither recovers by waiting: the key is gone, or HEM has
+                # forgotten the command. The next poll will show the truth.
+                _LOGGER.warning("Stopped tracking command %s: %s", command_id, err)
+                break
             except HemError as err:
                 _LOGGER.debug("Command %s poll failed: %s", command_id, err)
                 continue
@@ -239,12 +259,16 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
             if state in TERMINAL_STATES:
                 if state != "readback_confirmed":
                     _LOGGER.warning(
-                        "HEM command %s finished as '%s' - check the inverter", command_id, state
+                        "HEM command %s finished as '%s' - check the inverter",
+                        command_id,
+                        state,
                     )
                 break
         else:
             _LOGGER.warning(
-                "Gave up waiting for HEM command %s after %ss", command_id, self._confirm_timeout
+                "Gave up waiting for HEM command %s after %ss",
+                command_id,
+                self._confirm_timeout,
             )
 
         await self.async_request_refresh()

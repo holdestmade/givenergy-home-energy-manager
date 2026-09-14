@@ -64,7 +64,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     """Set up Home Energy Manager from a config entry."""
-    session = async_get_clientsession(hass, verify_ssl=entry.data.get(CONF_VERIFY_SSL, True))
+    session = async_get_clientsession(
+        hass, verify_ssl=entry.data.get(CONF_VERIFY_SSL, True)
+    )
     api = HomeEnergyManagerApi(
         session,
         host=entry.data[CONF_HOST],
@@ -101,7 +103,9 @@ def _async_register_services(hass: HomeAssistant) -> None:
         entry_id = call.data[ATTR_CONFIG_ENTRY_ID]
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
-            raise ServiceValidationError(f"Unknown Home Energy Manager entry: {entry_id}")
+            raise ServiceValidationError(
+                f"Unknown Home Energy Manager entry: {entry_id}"
+            )
         coordinator = getattr(entry, "runtime_data", None)
         if coordinator is None:
             raise ServiceValidationError(f"Entry {entry.title} is not loaded")
@@ -120,16 +124,26 @@ def _async_register_services(hass: HomeAssistant) -> None:
         await _coordinator(call).async_stop(ACTION_DISCHARGE)
 
     hass.services.async_register(
-        DOMAIN, SERVICE_FORCE_CHARGE, _force_charge,
+        DOMAIN,
+        SERVICE_FORCE_CHARGE,
+        _force_charge,
         schema=vol.Schema({**_ENTRY_SCHEMA, **_MINUTES_SCHEMA}),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_FORCE_DISCHARGE, _force_discharge,
+        DOMAIN,
+        SERVICE_FORCE_DISCHARGE,
+        _force_discharge,
         schema=vol.Schema({**_ENTRY_SCHEMA, **_MINUTES_SCHEMA}),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_STOP_FORCE_CHARGE, _stop_charge, schema=vol.Schema(_ENTRY_SCHEMA)
+        DOMAIN,
+        SERVICE_STOP_FORCE_CHARGE,
+        _stop_charge,
+        schema=vol.Schema(_ENTRY_SCHEMA),
     )
     hass.services.async_register(
-        DOMAIN, SERVICE_STOP_FORCE_DISCHARGE, _stop_discharge, schema=vol.Schema(_ENTRY_SCHEMA)
+        DOMAIN,
+        SERVICE_STOP_FORCE_DISCHARGE,
+        _stop_discharge,
+        schema=vol.Schema(_ENTRY_SCHEMA),
     )

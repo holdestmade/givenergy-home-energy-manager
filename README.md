@@ -1,5 +1,8 @@
 # Home Energy Manager — Home Assistant integration
 
+[![hacs][hacs-badge]][hacs-url]
+[![Validate](https://github.com/holdestmade/givenergy-home-energy-manager/actions/workflows/validate.yml/badge.svg)](https://github.com/holdestmade/givenergy-home-energy-manager/actions/workflows/validate.yml)
+
 A custom integration for [psylsph/home-energy-manager](https://github.com/psylsph/home-energy-manager),
 talking to its authenticated integration API (default port **7338**, not the 7337 dashboard).
 
@@ -8,9 +11,32 @@ and `_get_reconfigure_entry`).
 
 ## Install
 
+### HACS (recommended)
+
+This repository is HACS-compatible but is not in the default HACS store, so add it as a
+custom repository:
+
+1. HACS → **⋮** (top right) → **Custom repositories**.
+2. Repository: `https://github.com/holdestmade/givenergy-home-energy-manager`,
+   Type: **Integration** → **Add**.
+3. Find **GivEnergy Home Energy Manager** in HACS, **Download**, then **restart Home
+   Assistant**.
+
+Or use the My Home Assistant link:
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=holdestmade&repository=givenergy-home-energy-manager&category=integration)
+
+### Manual
+
 Copy `custom_components/home_energy_manager/` into your HA `config/custom_components/`
-directory and restart. Then **Settings → Devices & services → Add integration →
-Home Energy Manager**.
+directory and restart.
+
+### Then
+
+**Settings → Devices & services → Add integration → Home Energy Manager**.
+
+[hacs-badge]: https://img.shields.io/badge/HACS-Custom-41BDF5.svg
+[hacs-url]: https://github.com/hacs/integration
 
 ## Before you start
 
@@ -85,6 +111,11 @@ If something you expect is missing:
 Same caveat for units: the power sensors assume watts and the energy counters kWh. If
 your install reports kW, change `native_unit_of_measurement` on those descriptions.
 
+If `/api/snapshot` answers 403 or 404, snapshot polling switches itself off for the rest
+of that entry's life (reload the entry to probe again) and the integration carries on
+with the status sensors. A timeout or a 5xx is treated as transient instead: the previous
+readings are held and the next poll retries.
+
 ## How commands behave
 
 A POST returning 200 means HEM **accepted and queued** it, not that the inverter applied
@@ -119,3 +150,7 @@ automation:
           config_entry_id: !input hem_entry   # or paste the entry id
           minutes: 180
 ```
+
+## License
+
+[MIT](LICENSE).

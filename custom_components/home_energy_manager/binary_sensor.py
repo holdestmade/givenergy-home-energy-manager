@@ -56,7 +56,9 @@ BINARY_SENSORS: tuple[HemBinarySensorDescription, ...] = (
         device_class=BinarySensorDeviceClass.PROBLEM,
         # An empty list in an ok:false response is not a clean bill of health,
         # so only report conditions when the status itself is usable.
-        value_fn=lambda d: bool(d.status.get("ok")) and bool(d.status.get("conditions")),
+        value_fn=lambda d: (
+            bool(d.status.get("ok")) and bool(d.status.get("conditions"))
+        ),
     ),
     HemBinarySensorDescription(
         key="force_charge_active",

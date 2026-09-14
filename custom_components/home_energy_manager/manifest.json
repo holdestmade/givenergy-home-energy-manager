@@ -1,12 +1,12 @@
 {
   "domain": "home_energy_manager",
   "name": "Home Energy Manager",
-  "codeowners": [],
+  "codeowners": ["@holdestmade"],
   "config_flow": true,
-  "documentation": "https://github.com/psylsph/home-energy-manager/blob/master/REMOTE_CONTROL.md",
+  "documentation": "https://github.com/holdestmade/givenergy-home-energy-manager",
   "integration_type": "device",
   "iot_class": "local_polling",
-  "issue_tracker": "https://github.com/psylsph/home-energy-manager/issues",
+  "issue_tracker": "https://github.com/holdestmade/givenergy-home-energy-manager/issues",
   "requirements": [],
   "version": "1.0.0"
 }

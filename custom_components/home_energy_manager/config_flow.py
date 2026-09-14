@@ -123,7 +123,9 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
             step_id="user", data_schema=STEP_USER_SCHEMA, errors=errors
         )
 
-    async def async_step_reauth(self, entry_data: Mapping[str, Any]) -> ConfigFlowResult:
+    async def async_step_reauth(
+        self, entry_data: Mapping[str, Any]
+    ) -> ConfigFlowResult:
         """Start reauth - HEM shows a new key only once when it is regenerated."""
         return await self.async_step_reauth_confirm()
 
@@ -177,7 +179,9 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
                     f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
                 )
                 self._abort_if_unique_id_mismatch(reason="wrong_device")
-                return self.async_update_reload_and_abort(entry, data_updates=user_input)
+                return self.async_update_reload_and_abort(
+                    entry, data_updates=user_input
+                )
 
         return self.async_show_form(
             step_id="reconfigure",
@@ -235,7 +239,8 @@ class HemOptionsFlow(OptionsFlow):
                     CONF_POLL_SNAPSHOT, default=options.get(CONF_POLL_SNAPSHOT, True)
                 ): BooleanSelector(),
                 vol.Required(
-                    CONF_ENABLE_CONTROLS, default=options.get(CONF_ENABLE_CONTROLS, False)
+                    CONF_ENABLE_CONTROLS,
+                    default=options.get(CONF_ENABLE_CONTROLS, False),
                 ): BooleanSelector(),
                 vol.Required(
                     CONF_FORCE_MINUTES,
@@ -265,7 +270,9 @@ class HemOptionsFlow(OptionsFlow):
                     CONF_DASHBOARD_PORT,
                     default=options.get(CONF_DASHBOARD_PORT, DEFAULT_DASHBOARD_PORT),
                 ): NumberSelector(
-                    NumberSelectorConfig(min=1, max=65535, step=1, mode=NumberSelectorMode.BOX)
+                    NumberSelectorConfig(
+                        min=1, max=65535, step=1, mode=NumberSelectorMode.BOX
+                    )
                 ),
             }
         )
