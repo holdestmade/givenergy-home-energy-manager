@@ -150,3 +150,7 @@ automation:
           config_entry_id: !input hem_entry   # or paste the entry id
           minutes: 180
 ```
+
+## License
+
+[MIT](LICENSE).
