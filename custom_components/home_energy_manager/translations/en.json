@@ -110,7 +110,8 @@
       "force_discharge_active": { "name": "Force discharge active" },
       "charge_schedule_active": { "name": "Charge schedule active" },
       "export_schedule_active": { "name": "Export schedule active" },
-      "charging": { "name": "Battery charging" }
+      "charging": { "name": "Battery charging" },
+      "grid_online": { "name": "Grid online" }
     },
     "switch": {
       "force_charge": { "name": "Force charge" },

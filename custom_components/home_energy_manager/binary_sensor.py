@@ -25,6 +25,9 @@ class HemBinarySensorDescription(BinarySensorEntityDescription):
     """Binary sensor description with a value function."""
 
     value_fn: Callable[[HemData], bool | None]
+    # Snapshot-backed sensors are only created when their key actually resolves,
+    # matching how the snapshot sensors in sensor.py are handled.
+    from_snapshot: bool = False
 
 
 BINARY_SENSORS: tuple[HemBinarySensorDescription, ...] = (
@@ -91,6 +94,21 @@ BINARY_SENSORS: tuple[HemBinarySensorDescription, ...] = (
         # Observed activity, not requested action.
         value_fn=lambda d: d.status.get("activity") == "charging",
     ),
+    HemBinarySensorDescription(
+        key="grid_online",
+        translation_key="grid_online",
+        from_snapshot=True,
+        device_class=BinarySensorDeviceClass.CONNECTIVITY,
+        # Deliberately None rather than False when the key is absent: claiming a
+        # grid outage because the snapshot simply has not arrived would be worse
+        # than reporting nothing. `grid_online` is about the supply, which is
+        # not the same thing as the `connected` sensor's link to the inverter.
+        value_fn=lambda d: (
+            None
+            if d.snapshot.get("grid_online") is None
+            else bool(d.snapshot["grid_online"])
+        ),
+    ),
 )
 
 
@@ -100,12 +118,15 @@ async def async_setup_entry(
     """Set up the binary sensors."""
     coordinator: HemCoordinator = entry.runtime_data
     async_add_entities(
-        HemBinarySensor(coordinator, description) for description in BINARY_SENSORS
+        HemBinarySensor(coordinator, description)
+        for description in BINARY_SENSORS
+        if not description.from_snapshot
+        or description.value_fn(coordinator.data) is not None
     )
 
 
 class HemBinarySensor(HemEntity, BinarySensorEntity):
-    """A single boolean derived from the status payload."""
+    """A single boolean derived from the status or snapshot payload."""
 
     entity_description: HemBinarySensorDescription
 
