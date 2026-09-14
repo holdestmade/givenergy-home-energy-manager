@@ -102,7 +102,20 @@ counters" — no published key list. So each snapshot sensor tries several candi
 names (`battery_soc`, `soc`, `battery.soc`, …) and the **entity is only created if a key
 actually resolves** during setup.
 
-If something you expect is missing:
+The key names below are confirmed against a diagnostics download from HEM and are tried
+first; the older guesses are kept behind them as fallbacks for other HEM builds.
+
+| Sensor | Confirmed key |
+|---|---|
+| Battery | `soc` |
+| Solar / battery / grid / home power | `solar_power`, `battery_power`, `grid_power`, `home_power` |
+| Solar energy today | `today_solar_kwh` |
+| Grid import / export today | `today_import_kwh`, `today_export_kwh` |
+| Battery charge / discharge today | `today_charge_kwh`, `today_discharge_kwh` |
+| Home consumption today | `today_consumption_kwh` |
+| Charge / discharge rate (raw) | `limits.charge_rate_raw`, `limits.discharge_rate_raw` |
+
+If something you expect is still missing:
 
 1. Download **Diagnostics** from the device page — it includes the raw snapshot payload
    and a sorted `snapshot_keys` list.
