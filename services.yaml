@@ -1,0 +1,53 @@
+force_charge:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: home_energy_manager
+    minutes:
+      required: true
+      example: 60
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 1439
+          step: 1
+          unit_of_measurement: min
+          mode: box
+
+force_discharge:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: home_energy_manager
+    minutes:
+      required: true
+      example: 30
+      default: 30
+      selector:
+        number:
+          min: 1
+          max: 1439
+          step: 1
+          unit_of_measurement: min
+          mode: box
+
+stop_force_charge:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: home_energy_manager
+
+stop_force_discharge:
+  fields:
+    config_entry_id:
+      required: true
+      selector:
+        config_entry:
+          integration: home_energy_manager

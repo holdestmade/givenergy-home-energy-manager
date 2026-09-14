@@ -1,0 +1,12 @@
+{
+  "domain": "home_energy_manager",
+  "name": "Home Energy Manager",
+  "codeowners": [],
+  "config_flow": true,
+  "documentation": "https://github.com/psylsph/home-energy-manager/blob/master/REMOTE_CONTROL.md",
+  "integration_type": "device",
+  "iot_class": "local_polling",
+  "issue_tracker": "https://github.com/psylsph/home-energy-manager/issues",
+  "requirements": [],
+  "version": "1.0.0"
+}
