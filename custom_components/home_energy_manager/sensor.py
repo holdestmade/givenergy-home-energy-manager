@@ -63,6 +63,18 @@ def _as_float(value: Any) -> float | None:
         return None
 
 
+def _as_int(value: Any) -> int | None:
+    """Coerce to a whole number.
+
+    Percentages, raw register values and second counts are integral quantities
+    and HEM already returns them as integers, so _as_float would render them as
+    "55.0". Rounding here keeps the state itself whole, which matters for
+    templates and history as well as for the display.
+    """
+    number = _as_float(value)
+    return None if number is None else round(number)
+
+
 def _as_text(value: Any) -> str | None:
     """Coerce to a string that fits in a state, unchanged.
 
@@ -252,28 +264,31 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="age_seconds",
         translation_key="age_seconds",
+        suggested_display_precision=0,
         icon="mdi:clock-alert-outline",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: _as_float(d.status.get("age_seconds")),
+        value_fn=lambda d: _as_int(d.status.get("age_seconds")),
     ),
     HemSensorDescription(
         key="stale_after_seconds",
         translation_key="stale_after_seconds",
+        suggested_display_precision=0,
         icon="mdi:clock-outline",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: _as_float(d.status.get("stale_after_seconds")),
+        value_fn=lambda d: _as_int(d.status.get("stale_after_seconds")),
     ),
     # --- limits block -------------------------------------------------------
     HemSensorDescription(
         key="reserve_soc",
         translation_key="reserve_soc",
+        suggested_display_precision=0,
         icon="mdi:battery-arrow-down-outline",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: _as_float(
+        value_fn=lambda d: _as_int(
             pick(
                 d.status,
                 "limits.reserve_soc",
@@ -285,21 +300,23 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="target_soc",
         translation_key="target_soc",
+        suggested_display_precision=0,
         icon="mdi:battery-arrow-up-outline",
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: _as_float(
+        value_fn=lambda d: _as_int(
             pick(d.status, "limits.target_soc", "limits.charge_target", "limits.target")
         ),
     ),
     HemSensorDescription(
         key="charge_rate",
         translation_key="charge_rate",
+        suggested_display_precision=0,
         icon="mdi:speedometer",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
         # Raw register value: not watts and not a universally scaled percentage.
-        value_fn=lambda d: _as_float(
+        value_fn=lambda d: _as_int(
             pick(
                 d.status,
                 "limits.charge_rate_raw",
@@ -311,10 +328,11 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="discharge_rate",
         translation_key="discharge_rate",
+        suggested_display_precision=0,
         icon="mdi:speedometer-slow",
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: _as_float(
+        value_fn=lambda d: _as_int(
             pick(
                 d.status,
                 "limits.discharge_rate_raw",
@@ -336,11 +354,12 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="battery_soc",
         translation_key="battery_soc",
+        suggested_display_precision=0,
         from_snapshot=True,
         device_class=SensorDeviceClass.BATTERY,
         native_unit_of_measurement=PERCENTAGE,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: _as_float(
+        value_fn=lambda d: _as_int(
             pick(
                 d.snapshot,
                 "battery_soc",
@@ -595,12 +614,13 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="snapshot_age",
         translation_key="snapshot_age",
+        suggested_display_precision=0,
         from_snapshot=True,
         icon="mdi:clock-alert-outline",
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: _as_float(d.snapshot.get("age_seconds")),
+        value_fn=lambda d: _as_int(d.snapshot.get("age_seconds")),
     ),
 )
 
