@@ -175,12 +175,18 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
             except HemError:
                 errors["base"] = "cannot_connect"
             else:
-                await self.async_set_unique_id(
-                    f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
-                )
-                self._abort_if_unique_id_mismatch(reason="wrong_device")
+                # The unique id *is* the address, so moving HEM necessarily
+                # changes it. _abort_if_unique_id_mismatch() compares the new
+                # id against this entry's own old one, which cannot match after
+                # a move, so it rejected every move this step exists to make.
+                # The real clash is a *different* entry already on that
+                # address; nothing to check when the address has not changed.
+                new_unique_id = f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
+                if new_unique_id != entry.unique_id:
+                    await self.async_set_unique_id(new_unique_id)
+                    self._abort_if_unique_id_configured(error="wrong_device")
                 return self.async_update_reload_and_abort(
-                    entry, data_updates=user_input
+                    entry, unique_id=new_unique_id, data_updates=user_input
                 )
 
         return self.async_show_form(

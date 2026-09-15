@@ -197,36 +197,34 @@ async def test_reauth_reports_errors(
 # --- reconfigure -----------------------------------------------------------
 
 
-async def test_reconfigure_accepts_an_unchanged_address(
-    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+async def test_reconfigure_shows_its_form(
+    hass: HomeAssistant, config_entry: MockConfigEntry
 ) -> None:
-    """Re-submitting the same address revalidates and saves."""
+    """The step opens on a form seeded with the entry's current address."""
     result = await config_entry.start_reconfigure_flow(hass)
+
+    assert result["type"] is FlowResultType.FORM
     assert result["step_id"] == "reconfigure"
 
-    with patch(VALIDATE):
-        result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], USER_INPUT
-        )
 
-    assert result["type"] is FlowResultType.ABORT
-    assert result["reason"] == "reconfigure_successful"
-
-
-@pytest.mark.parametrize("changed", [{CONF_PORT: 9999}, {CONF_HOST: "other.local"}])
-async def test_reconfigure_currently_rejects_any_address_change(
-    hass: HomeAssistant, config_entry: MockConfigEntry, changed: dict[str, Any]
+@pytest.mark.parametrize(
+    "changed",
+    [
+        {CONF_PORT: 9999},
+        {CONF_HOST: "other.local"},
+        {CONF_HOST: "new.local", CONF_PORT: 9999},
+    ],
+)
+async def test_reconfigure_moves_hem_to_a_new_address(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    mock_setup_entry: AsyncMock,
+    changed: dict[str, Any],
 ) -> None:
-    """Documents a bug rather than endorsing it.
+    """Moving HEM is what this step exists to do.
 
-    The unique id is "host:port", and async_step_reconfigure sets the unique id
-    from the *new* input before calling _abort_if_unique_id_mismatch(). The two
-    can therefore only agree when nothing changed, so the step aborts with
-    wrong_device for exactly the move its docstring offers to make.
-
-    The guard is still right to reject a genuinely different HEM; it just cannot
-    tell that apart from the same HEM at a new address while identity and
-    address are the same string. Change this test with the fix.
+    The unique id is the address, so a move necessarily changes it and the
+    entry has to follow - otherwise the next setup reads as a different device.
     """
     result = await config_entry.start_reconfigure_flow(hass)
 
@@ -236,9 +234,68 @@ async def test_reconfigure_currently_rejects_any_address_change(
         )
 
     assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+
+    expected = {**USER_INPUT, **changed}
+    assert config_entry.data[CONF_HOST] == expected[CONF_HOST]
+    assert config_entry.data[CONF_PORT] == expected[CONF_PORT]
+    assert config_entry.unique_id == f"{expected[CONF_HOST]}:{expected[CONF_PORT]}"
+
+
+async def test_reconfigure_keeps_the_api_key(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+) -> None:
+    """A move is not a reauth; the key the user already has still applies."""
+    result = await config_entry.start_reconfigure_flow(hass)
+
+    with patch(VALIDATE):
+        await hass.config_entries.flow.async_configure(
+            result["flow_id"], {**USER_INPUT, CONF_PORT: 9999}
+        )
+
+    assert config_entry.data[CONF_API_KEY] == API_KEY
+
+
+async def test_reconfigure_refuses_an_address_another_entry_owns(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+) -> None:
+    """Two entries on one address would fight over the same HEM."""
+    other = MockConfigEntry(
+        domain=DOMAIN,
+        title="Home Energy Manager (other.local)",
+        data={**ENTRY_DATA, CONF_HOST: "other.local"},
+        unique_id=f"other.local:{PORT}",
+    )
+    other.add_to_hass(hass)
+
+    result = await config_entry.start_reconfigure_flow(hass)
+
+    with patch(VALIDATE):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {**USER_INPUT, CONF_HOST: "other.local"}
+        )
+
+    assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "wrong_device"
+    # The entry the flow was launched from is left alone.
     assert config_entry.data[CONF_HOST] == HOST
-    assert config_entry.data[CONF_PORT] == PORT
+    assert config_entry.unique_id == f"{HOST}:{PORT}"
+
+
+async def test_reconfigure_accepts_the_same_address_again(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+) -> None:
+    """Re-submitting unchanged revalidates; an entry cannot clash with itself."""
+    result = await config_entry.start_reconfigure_flow(hass)
+
+    with patch(VALIDATE):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], USER_INPUT
+        )
+
+    assert result["type"] is FlowResultType.ABORT
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.unique_id == f"{HOST}:{PORT}"
 
 
 @pytest.mark.parametrize(
