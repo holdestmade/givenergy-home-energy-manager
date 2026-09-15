@@ -38,3 +38,19 @@ jobs:
       - uses: astral-sh/ruff-action@v3
         with:
           args: format --check
+
+  pytest:
+    name: pytest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          # Tracks the Python version the pinned Home Assistant supports.
+          python-version: "3.13"
+          cache: pip
+      - run: pip install -r requirements_test.txt
+      - run: >-
+          pytest
+          --cov=custom_components.home_energy_manager
+          --cov-report=term-missing
