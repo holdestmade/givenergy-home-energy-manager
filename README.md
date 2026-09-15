@@ -126,8 +126,11 @@ your install reports kW, change `native_unit_of_measurement` on those descriptio
 
 If `/api/snapshot` answers 403 or 404, snapshot polling switches itself off for the rest
 of that entry's life (reload the entry to probe again) and the integration carries on
-with the status sensors. A timeout or a 5xx is treated as transient instead: the previous
-readings are held and the next poll retries.
+with the status sensors. A timeout, a 5xx or a 409 ("no snapshot yet") is treated as
+transient instead: the previous readings are held and the next poll retries. If that
+happens on the very first poll there are no readings to hold and the snapshot entities
+would never be created, so setup is retried until HEM can supply one (turn snapshot
+polling off to load without it).
 
 ## How commands behave
 
@@ -135,7 +138,9 @@ A POST returning 200 means HEM **accepted and queued** it, not that the inverter
 it. Each command gets a fresh `Idempotency-Key`, and the integration then polls
 `GET /api/commands/{id}` in the background until `readback_confirmed` (or `failed` /
 `expired` / `unknown`, which are logged as warnings). `sensor.last_command_state` shows
-where that got to, with the command id as an attribute.
+where that got to, with the command id as an attribute. Only the newest command is
+tracked: sending another one before the previous is confirmed drops the previous one's
+polling, so the sensor never reports an older command's outcome against the new id.
 
 The switches hold an optimistic state for up to 3 minutes and then defer to whatever HEM
 reports. Commands are serialised per entry so HA never fires two starts at once — HEM
