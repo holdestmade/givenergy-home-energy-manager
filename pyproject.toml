@@ -9,3 +9,10 @@ select = ["ASYNC", "B", "C4", "D", "E", "F", "I", "SIM", "UP", "W"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "pep257"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+# pytest-homeassistant-custom-component needs the custom_components package to
+# be importable from the repo root, which is where pytest is run from.
+pythonpath = ["."]

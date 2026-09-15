@@ -164,6 +164,33 @@ automation:
           minutes: 180
 ```
 
+## Development
+
+The test suite runs against a real Home Assistant, supplied by
+`pytest-homeassistant-custom-component`, which pins the Home Assistant, pytest
+and pytest-asyncio versions that belong together. Python 3.13 or newer:
+
+```bash
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements_test.txt
+pytest
+```
+
+Coverage, as CI reports it:
+
+```bash
+pytest --cov=custom_components.home_energy_manager --cov-report=term-missing
+```
+
+Linting matches the parts of Home Assistant core's own config that apply to a
+custom integration:
+
+```bash
+ruff check . && ruff format --check .
+```
+
+Bump the pin in `requirements_test.txt` to test against a newer Home Assistant.
+
 ## License
 
 [MIT](LICENSE).
