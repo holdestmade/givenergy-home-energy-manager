@@ -161,9 +161,19 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
                 # Transient: a timeout, a rate limit or a 5xx. Hold the last
                 # good snapshot rather than blanking every snapshot sensor, and
                 # try again on the next poll.
-                _LOGGER.debug("Snapshot fetch failed, retrying next poll: %s", err)
                 if self.data is not None:
                     snapshot = self.data.snapshot
+                    _LOGGER.debug(
+                        "Snapshot fetch failed, holding the previous snapshot "
+                        "until the next poll: %s",
+                        err,
+                    )
+                else:
+                    _LOGGER.debug(
+                        "Snapshot fetch failed with nothing to fall back on, "
+                        "retrying next poll: %s",
+                        err,
+                    )
 
         _LOGGER.debug("HEM status=%s snapshot=%s", status, snapshot)
         return HemData(status=status, snapshot=snapshot)

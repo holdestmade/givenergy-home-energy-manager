@@ -114,6 +114,20 @@ def _pretty(value: Any) -> str | None:
     return (joined[0].upper() + joined[1:])[:MAX_STATE_LENGTH]
 
 
+def _join_conditions(conditions: Any, field: str, empty: str) -> str:
+    """Join one field of HEM's condition list, tolerating a ragged payload.
+
+    `conditions` is documented as a list of objects but is only ever rendered,
+    so a malformed entry should drop out rather than break the sensor.
+    """
+    values = [
+        str(item[field])
+        for item in (conditions or [])
+        if isinstance(item, dict) and item.get(field)
+    ]
+    return ", ".join(values) or empty
+
+
 def _as_timestamp(value: Any) -> datetime | None:
     """Parse an RFC 3339 timestamp, tolerating null."""
     if not value:
@@ -225,12 +239,7 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         # Joins the human labels, which HEM already supplies properly cased.
         # The raw codes live on their own sensor below.
         value_fn=lambda d: _as_text(
-            ", ".join(
-                str(c.get("label"))
-                for c in (d.status.get("conditions") or [])
-                if isinstance(c, dict) and c.get("label")
-            )
-            or "None"
+            _join_conditions(d.status.get("conditions"), "label", "None")
         ),
     ),
     HemSensorDescription(
@@ -241,12 +250,7 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         # Deliberately left raw and lowercase. Codes are the stable thing to
         # write automations against, so they must not be reformatted.
         value_fn=lambda d: _as_text(
-            ", ".join(
-                str(c.get("code"))
-                for c in (d.status.get("conditions") or [])
-                if isinstance(c, dict) and c.get("code")
-            )
-            or "none"
+            _join_conditions(d.status.get("conditions"), "code", "none")
         ),
     ),
     HemSensorDescription(

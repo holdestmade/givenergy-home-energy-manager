@@ -22,6 +22,16 @@ from .coordinator import HemCoordinator
 from .entity import HemEntity
 
 
+def _clamp(value: float) -> int:
+    """Return whole minutes inside the range HEM accepts.
+
+    Home Assistant already bounds the number entity, but a value restored from
+    an older install (or one written before these limits changed) arrives
+    unchecked, and HEM rejects anything outside 1..1439 outright.
+    """
+    return max(MIN_FORCE_MINUTES, min(MAX_FORCE_MINUTES, int(value)))
+
+
 async def async_setup_entry(
     hass: HomeAssistant, entry: ConfigEntry, async_add_entities: AddEntitiesCallback
 ) -> None:
@@ -55,11 +65,13 @@ class HemForceMinutesNumber(HemEntity, RestoreNumber):
         """Restore the last value the user set."""
         await super().async_added_to_hass()
         if (last := await self.async_get_last_number_data()) and last.native_value:
-            self._attr_native_value = float(last.native_value)
-            self.coordinator.force_minutes = int(last.native_value)
+            minutes = _clamp(last.native_value)
+            self._attr_native_value = float(minutes)
+            self.coordinator.force_minutes = minutes
 
     async def async_set_native_value(self, value: float) -> None:
         """Store the new duration for the switches to use."""
-        self._attr_native_value = float(int(value))
-        self.coordinator.force_minutes = int(value)
+        minutes = _clamp(value)
+        self._attr_native_value = float(minutes)
+        self.coordinator.force_minutes = minutes
         self.async_write_ha_state()

@@ -53,7 +53,14 @@ class HemConflictError(HemError):
     """HTTP 409 - action already running, idempotency clash, or no snapshot yet."""
 
     def __init__(self, message: str, command_id: str | None = None) -> None:
-        """Keep the existing command id when HEM reports one."""
+        """Keep the existing command id when HEM reports one.
+
+        The id goes into the message as well as the attribute, because the
+        coordinator surfaces these straight to the user as a HomeAssistantError
+        and the id is the only handle they have on the command already running.
+        """
+        if command_id:
+            message = f"{message} (command_id={command_id})"
         super().__init__(message)
         self.command_id = command_id
 
@@ -62,7 +69,9 @@ class HemRateLimitError(HemError):
     """HTTP 429 - back off for the advertised interval."""
 
     def __init__(self, message: str, retry_after: int | None = None) -> None:
-        """Keep the Retry-After hint."""
+        """Keep the Retry-After hint, in the message as well as the attribute."""
+        if retry_after is not None:
+            message = f"{message} (retry after {retry_after}s)"
         super().__init__(message)
         self.retry_after = retry_after
 
