@@ -26,7 +26,7 @@ from custom_components.home_energy_manager.const import (
     SERVICE_STOP_FORCE_DISCHARGE,
 )
 
-from .const import STATUS, STATUS_URL
+from .const import SNAPSHOT_URL, STATUS, STATUS_URL
 
 
 async def test_setup_and_unload(
@@ -84,6 +84,22 @@ async def test_an_unreachable_hem_is_retried(
     await hass.async_block_till_done()
 
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
+
+
+async def test_a_hem_with_no_snapshot_yet_is_retried(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Snapshot entities are chosen at setup, so wait until HEM can supply one."""
+    aioclient_mock.get(STATUS_URL, json=STATUS)
+    aioclient_mock.get(SNAPSHOT_URL, status=409, json={"error": "No snapshot yet"})
+
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert config_entry.state is ConfigEntryState.SETUP_RETRY
+    assert "No snapshot yet" in (config_entry.reason or "")
 
 
 async def test_changing_options_reloads_the_entry(

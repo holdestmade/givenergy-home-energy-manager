@@ -120,6 +120,8 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
         # Snapshot support is probed once; a 404/403 there must not kill polling.
         self._snapshot_available = True
         self._command_lock = asyncio.Lock()
+        # Readback confirmation of the newest command, if still running.
+        self._confirm_task: asyncio.Task[None] | None = None
 
         super().__init__(
             hass,
@@ -158,22 +160,27 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
                 )
                 self._snapshot_available = False
             except HemError as err:
-                # Transient: a timeout, a rate limit or a 5xx. Hold the last
-                # good snapshot rather than blanking every snapshot sensor, and
-                # try again on the next poll.
-                if self.data is not None:
-                    snapshot = self.data.snapshot
-                    _LOGGER.debug(
-                        "Snapshot fetch failed, holding the previous snapshot "
-                        "until the next poll: %s",
-                        err,
-                    )
-                else:
-                    _LOGGER.debug(
-                        "Snapshot fetch failed with nothing to fall back on, "
-                        "retrying next poll: %s",
-                        err,
-                    )
+                # Transient: a timeout, a rate limit, a 5xx, or a 409 because
+                # HEM has not taken a snapshot yet.
+                if self.data is None:
+                    # The platforms choose their snapshot entities from the
+                    # first poll, so an empty snapshot here would leave every
+                    # one of them missing until the entry is reloaded. Fail
+                    # the refresh instead: async_config_entry_first_refresh
+                    # turns that into ConfigEntryNotReady and setup retries.
+                    raise UpdateFailed(
+                        f"Snapshot not available on the first poll ({err}); "
+                        "retrying setup. Turn off snapshot polling to load "
+                        "without it"
+                    ) from err
+                # Hold the last good snapshot rather than blanking every
+                # snapshot sensor, and try again on the next poll.
+                snapshot = self.data.snapshot
+                _LOGGER.debug(
+                    "Snapshot fetch failed, holding the previous snapshot "
+                    "until the next poll: %s",
+                    err,
+                )
 
         _LOGGER.debug("HEM status=%s snapshot=%s", status, snapshot)
         return HemData(status=status, snapshot=snapshot)
@@ -225,6 +232,16 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
 
     async def _async_track(self, result: dict[str, Any], label: str) -> str | None:
         """Record the accepted command and start readback confirmation."""
+        # Only the newest command is reported, so a confirmation still running
+        # for the previous one must not write its lifecycle over this one.
+        if self._confirm_task is not None and not self._confirm_task.done():
+            _LOGGER.debug(
+                "Command %s superseded before it was confirmed, dropping it",
+                self.last_command_id,
+            )
+            self._confirm_task.cancel()
+        self._confirm_task = None
+
         command_id = result.get("command_id")
         self.last_command_id = command_id
         self.last_command_action = label
@@ -232,7 +249,7 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
         _LOGGER.debug("HEM accepted %s as command %s", label, command_id)
 
         if command_id and self._confirm_timeout > 0:
-            self.entry.async_create_background_task(
+            self._confirm_task = self.entry.async_create_background_task(
                 self.hass,
                 self._async_confirm(command_id),
                 name=f"{DOMAIN} confirm {command_id}",

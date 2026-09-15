@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from typing import Any
-from unittest.mock import AsyncMock, Mock, patch
+from unittest.mock import AsyncMock, Mock, call, patch
 
 import pytest
 from homeassistant.core import HomeAssistant
@@ -222,17 +222,23 @@ async def test_transient_snapshot_failure_holds_the_previous_snapshot(
     assert api.async_get_snapshot.call_count == 2
 
 
-async def test_transient_snapshot_failure_on_the_first_poll_has_no_fallback(
-    coordinator: HemCoordinator, api: AsyncMock, caplog: pytest.LogCaptureFixture
+@pytest.mark.parametrize(
+    "error", [HemConflictError("No snapshot yet"), HemConnectionError("timeout")]
+)
+async def test_transient_snapshot_failure_on_the_first_poll_fails_the_refresh(
+    coordinator: HemCoordinator, api: AsyncMock, error: Exception
 ) -> None:
-    """With no previous poll the snapshot is simply empty."""
-    api.async_get_snapshot.side_effect = HemConnectionError("timeout")
+    """The platforms choose their snapshot entities from the first poll.
 
-    with caplog.at_level(logging.DEBUG):
-        await coordinator.async_refresh()
+    An empty snapshot there would leave every one of them missing until the
+    entry is reloaded, so the refresh fails and setup retries instead.
+    """
+    api.async_get_snapshot.side_effect = error
 
-    assert coordinator.data.snapshot == {}
-    assert "nothing to fall back on" in caplog.text
+    with pytest.raises(UpdateFailed) as caught:
+        await coordinator._async_update_data()
+
+    assert str(error) in str(caught.value)
 
 
 async def test_snapshot_polling_can_be_switched_off(
@@ -388,6 +394,69 @@ async def test_a_command_hem_does_not_id_is_not_tracked(
 
     task.assert_not_called()
     refresh.assert_called_once()
+
+
+async def test_a_newer_command_stops_tracking_the_previous_one(
+    hass: HomeAssistant, coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """Only the newest command is reported, so an older one must not overwrite it.
+
+    Without the cancel, the stop's readback_confirmed would be replaced by the
+    start's late "failed", against the stop's command id.
+    """
+    api.async_force_charge.return_value = {"command_id": "abc-123"}
+    api.async_stop_force_charge.return_value = {"command_id": "def-456"}
+    replies: dict[str, list[Any]] = {
+        "abc-123": [HemConnectionError("blip"), {"state": "failed"}],
+        "def-456": [{"state": "readback_confirmed"}],
+    }
+
+    def poll(command_id: str) -> dict[str, Any]:
+        reply = replies[command_id].pop(0)
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    api.async_get_command.side_effect = poll
+    coordinator._confirm_timeout = 30
+
+    with patch(
+        "custom_components.home_energy_manager.coordinator.COMMAND_POLL_INTERVAL", 0
+    ):
+        await coordinator.async_force(ACTION_CHARGE, 30)
+        first = coordinator._confirm_task
+        # The stop lands while the start's confirmation is waiting to poll.
+        await coordinator.async_stop(ACTION_CHARGE)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert first is not None and first.cancelled()
+    assert coordinator.last_command_id == "def-456"
+    assert coordinator.last_command_state == "readback_confirmed"
+    # The superseded command was never polled, let alone allowed to report.
+    assert api.async_get_command.await_args_list == [call("def-456")]
+
+
+async def test_a_command_without_an_id_still_supersedes_the_previous_one(
+    hass: HomeAssistant, coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """Nothing to track for the new command, but the old one is still stale."""
+    api.async_force_charge.return_value = {"command_id": "abc-123"}
+    api.async_stop_force_charge.return_value = {}
+    api.async_get_command.return_value = {"state": "failed"}
+    coordinator._confirm_timeout = 30
+
+    with patch(
+        "custom_components.home_energy_manager.coordinator.COMMAND_POLL_INTERVAL", 0
+    ):
+        await coordinator.async_force(ACTION_CHARGE, 30)
+        first = coordinator._confirm_task
+        await coordinator.async_stop(ACTION_CHARGE)
+        await hass.async_block_till_done(wait_background_tasks=True)
+
+    assert first is not None and first.cancelled()
+    assert coordinator.last_command_id is None
+    assert coordinator.last_command_state == "accepted"
+    api.async_get_command.assert_not_awaited()
 
 
 # --- readback confirmation -------------------------------------------------
