@@ -2,6 +2,7 @@
 
 [![hacs][hacs-badge]][hacs-url]
 [![Validate](https://github.com/holdestmade/givenergy-home-energy-manager/actions/workflows/validate.yml/badge.svg)](https://github.com/holdestmade/givenergy-home-energy-manager/actions/workflows/validate.yml)
+[![AI Assisted](https://img.shields.io/badge/AI--assisted-Claude-8A2BE2?logo=anthropic&logoColor=white)](#ai-disclosure)
 
 A custom integration for [psylsph/home-energy-manager](https://github.com/psylsph/home-energy-manager),
 talking to its authenticated integration API (default port **7338**, not the 7337 dashboard).
@@ -9,6 +10,11 @@ talking to its authenticated integration API (default port **7338**, not the 733
 Requires Home Assistant **2024.12** or newer (uses `entry.runtime_data`, `_get_reauth_entry`
 and `_get_reconfigure_entry`).
 
+## AI Disclosure
+
+This integration was developed with substantial assistance from AI (Anthropic's Claude).
+Code was generated and iterated on through AI conversations, then reviewed, tested
+and maintained by me on my own Home Assistant installation (HA 2026.x).
 ## Install
 
 ### HACS (recommended)
