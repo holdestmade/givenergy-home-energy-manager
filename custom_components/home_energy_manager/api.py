@@ -9,6 +9,8 @@ Only the documented surface is implemented:
     POST /api/control/force-charge/stop
     POST /api/control/force-discharge         {"minutes": n}
     POST /api/control/force-discharge/stop
+    POST /api/control/pause-mode              {"mode": m, "minutes": n}
+    POST /api/control/pause-mode/stop
 
 Every POST carries an Idempotency-Key. Per the HEM docs a retry is only safe
 with the *same* key and payload, so the caller owns key generation and the
@@ -220,4 +222,21 @@ class HomeEnergyManagerApi:
         """Stop Force Discharge."""
         return await self._request(
             "POST", "/api/control/force-discharge/stop", idempotency_key=idempotency_key
+        )
+
+    async def async_pause(
+        self, mode: str, minutes: int, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Start native battery pause: mode is charge, discharge or both."""
+        return await self._request(
+            "POST",
+            "/api/control/pause-mode",
+            json={"mode": mode, "minutes": int(minutes)},
+            idempotency_key=idempotency_key,
+        )
+
+    async def async_stop_pause(self, idempotency_key: str) -> dict[str, Any]:
+        """Stop native battery pause and restore the captured baseline."""
+        return await self._request(
+            "POST", "/api/control/pause-mode/stop", idempotency_key=idempotency_key
         )

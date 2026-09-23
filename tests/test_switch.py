@@ -13,6 +13,7 @@ from homeassistant.const import (
     SERVICE_TURN_ON,
     STATE_OFF,
     STATE_ON,
+    STATE_UNAVAILABLE,
 )
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
@@ -204,6 +205,34 @@ async def test_the_duration_is_exposed_as_an_attribute(
 ) -> None:
     """Templates should be able to see what turning on would ask for."""
     assert hass.states.get(CHARGE).attributes["minutes"] == 45
+
+
+@pytest.mark.parametrize(
+    "status_payload",
+    [
+        {
+            **IDLE_STATUS,
+            "control_capabilities": {"force_charge": True, "force_discharge": False},
+        }
+    ],
+)
+async def test_an_unsupported_action_is_unavailable(
+    hass: HomeAssistant, setup_switches: MockConfigEntry
+) -> None:
+    """HEM says this inverter cannot force discharge, so do not offer it."""
+    assert hass.states.get(CHARGE).state == STATE_OFF
+    assert hass.states.get(DISCHARGE).state == STATE_UNAVAILABLE
+
+
+@pytest.mark.parametrize(
+    "status_payload",
+    [{**IDLE_STATUS, "control_capabilities": {"force_discharge": None}}],
+)
+async def test_an_unknown_capability_stays_available(
+    hass: HomeAssistant, setup_switches: MockConfigEntry
+) -> None:
+    """HEM reports null until it can tell; that is not "unsupported"."""
+    assert hass.states.get(DISCHARGE).state == STATE_OFF
 
 
 async def test_switches_are_absent_when_controls_are_off(

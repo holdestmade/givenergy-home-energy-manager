@@ -16,8 +16,14 @@ from homeassistant.core import HomeAssistant
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ACTION_CHARGE, ACTION_DISCHARGE
-from .coordinator import HemCoordinator, HemData, pick, quick_action_matches
-from .entity import HemEntity, async_add_snapshot_entities
+from .coordinator import (
+    HemCoordinator,
+    HemData,
+    pause_mode_of,
+    pick,
+    quick_action_matches,
+)
+from .entity import HemEntity, async_add_entities_when_reported
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -25,8 +31,9 @@ class HemBinarySensorDescription(BinarySensorEntityDescription):
     """Binary sensor description with a value function."""
 
     value_fn: Callable[[HemData], bool | None]
-    # Snapshot-backed sensors are only created when their key actually resolves,
-    # matching how the snapshot sensors in sensor.py are handled.
+    # Snapshot-backed sensors are only created when their key actually resolves
+    # and go unavailable when the reading is stale, matching how the snapshot
+    # sensors in sensor.py are handled.
     from_snapshot: bool = False
 
 
@@ -76,6 +83,13 @@ BINARY_SENSORS: tuple[HemBinarySensorDescription, ...] = (
         value_fn=lambda d: quick_action_matches(d.status, ACTION_DISCHARGE),
     ),
     HemBinarySensorDescription(
+        key="pause_active",
+        translation_key="pause_active",
+        icon="mdi:battery-lock",
+        # Any native pause mode; the Battery pause select shows which.
+        value_fn=lambda d: pause_mode_of(d.status) is not None,
+    ),
+    HemBinarySensorDescription(
         key="charge_schedule_active",
         translation_key="charge_schedule_active",
         icon="mdi:calendar-clock",
@@ -122,7 +136,7 @@ async def async_setup_entry(
         for description in BINARY_SENSORS
         if not description.from_snapshot
     )
-    async_add_snapshot_entities(
+    async_add_entities_when_reported(
         entry,
         coordinator,
         [description for description in BINARY_SENSORS if description.from_snapshot],
@@ -142,6 +156,7 @@ class HemBinarySensor(HemEntity, BinarySensorEntity):
         """Store the description."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
+        self._goes_stale = description.from_snapshot
 
     @property
     def is_on(self) -> bool | None:

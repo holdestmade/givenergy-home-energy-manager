@@ -36,7 +36,10 @@ async def async_get_config_entry_diagnostics(
             "action": coordinator.last_command_action,
             "state": coordinator.last_command_state,
         },
+        "capabilities": coordinator.capabilities,
         "status": data.status if data else {},
         "snapshot": data.snapshot if data else {},
         "snapshot_keys": sorted(data.snapshot) if data and data.snapshot else [],
+        "snapshot_age_seconds": data.snapshot_age if data else None,
+        "snapshot_stale": data.snapshot_stale if data else None,
     }

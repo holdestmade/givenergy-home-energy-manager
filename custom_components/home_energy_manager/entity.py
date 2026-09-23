@@ -25,7 +25,7 @@ from .const import (
 from .coordinator import HemCoordinator, HemData
 
 
-class SnapshotDescription(Protocol):
+class ReportedDescription(Protocol):
     """The parts of an entity description that decide whether it exists."""
 
     key: str
@@ -33,44 +33,47 @@ class SnapshotDescription(Protocol):
 
 
 @callback
-def async_add_snapshot_entities(
+def async_add_entities_when_reported(
     entry: ConfigEntry,
     coordinator: HemCoordinator,
-    descriptions: Iterable[SnapshotDescription],
+    descriptions: Iterable[ReportedDescription],
     factory: Callable[[Any], Entity],
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Add each snapshot-backed entity the first time its key resolves.
+    """Add each entity the first time HEM reports a value for it.
 
-    /api/snapshot has no published field list, so an entity is only created
-    once HEM actually reports its key. That cannot be decided once at setup:
-    HEM answers {"ok": false} with no readings until it has its first
-    inverter reading, which is exactly the state it is in when HEM and Home
-    Assistant start together, and deciding then left every snapshot entity
-    missing until the entry was reloaded.
+    Used for everything HEM may simply not report: /api/snapshot has no
+    published field list, and some status fields only exist on some inverter
+    models. That cannot be decided once at setup: HEM answers {"ok": false}
+    with no readings until it has its first inverter reading, which is exactly
+    the state it is in when HEM and Home Assistant start together, and deciding
+    then left every snapshot entity missing until the entry was reloaded.
     """
     pending = list(descriptions)
 
     @callback
-    def _async_add_resolved() -> None:
+    def _async_add_reported() -> None:
         if coordinator.data is None:
             return
-        resolved = [d for d in pending if d.value_fn(coordinator.data) is not None]
-        if not resolved:
+        reported = [d for d in pending if d.value_fn(coordinator.data) is not None]
+        if not reported:
             return
-        for description in resolved:
+        for description in reported:
             pending.remove(description)
-        async_add_entities(factory(description) for description in resolved)
+        async_add_entities(factory(description) for description in reported)
 
-    _async_add_resolved()
+    _async_add_reported()
     if pending:
-        entry.async_on_unload(coordinator.async_add_listener(_async_add_resolved))
+        entry.async_on_unload(coordinator.async_add_listener(_async_add_reported))
 
 
 class HemEntity(CoordinatorEntity[HemCoordinator]):
     """Base entity: one HEM install is one device."""
 
     _attr_has_entity_name = True
+    # Snapshot readings go unavailable once HEM's reading is older than its
+    # own stale limit, rather than showing old power flows as current.
+    _goes_stale = False
 
     def __init__(self, coordinator: HemCoordinator, key: str) -> None:
         """Bind the entity to the entry's device."""
@@ -91,6 +94,14 @@ class HemEntity(CoordinatorEntity[HemCoordinator]):
                 entry.data.get(CONF_USE_SSL, False),
             ),
         )
+
+    @property
+    def available(self) -> bool:
+        """Return False when polling fails, or this reading has gone stale."""
+        if not super().available:
+            return False
+        data = self.coordinator.data
+        return not (self._goes_stale and data is not None and data.snapshot_stale)
 
     @property
     def status(self) -> dict:

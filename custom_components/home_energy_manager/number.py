@@ -1,8 +1,9 @@
-"""Duration control for Home Energy Manager force actions.
+"""Duration control for Home Energy Manager force and pause actions.
 
 This is a local setting, not an inverter register: it is the number of minutes
-the switches ask for when they start a force action. It restores across
-restarts and falls back to the value set in the integration's options.
+the force switches and the battery pause select ask for when they start an
+action. It restores across restarts and starts at 60 minutes. (Services take
+their own duration instead.)
 """
 
 from __future__ import annotations
@@ -44,7 +45,7 @@ async def async_setup_entry(
 
 
 class HemForceMinutesNumber(HemEntity, RestoreNumber):
-    """Minutes requested when a force action is started."""
+    """Minutes requested when a force action or a pause is started."""
 
     _attr_translation_key = "force_minutes"
     _attr_icon = "mdi:timer-cog-outline"
@@ -70,7 +71,7 @@ class HemForceMinutesNumber(HemEntity, RestoreNumber):
             self.coordinator.force_minutes = minutes
 
     async def async_set_native_value(self, value: float) -> None:
-        """Store the new duration for the switches to use."""
+        """Store the new duration for the switches and pause select to use."""
         minutes = _clamp(value)
         self._attr_native_value = float(minutes)
         self.coordinator.force_minutes = minutes

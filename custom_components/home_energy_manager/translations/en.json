@@ -46,12 +46,11 @@
     "step": {
       "init": {
         "title": "Options",
-        "description": "Battery controls are off by default. HEM also needs its own 'Allow battery control through the authenticated API' toggle enabled before any start command is accepted.",
+        "description": "Battery controls are off by default. HEM also needs its own 'Allow battery control through the authenticated API' toggle enabled before any start command is accepted. How long a force action or pause lasts is set on the device's Force action duration control.",
         "data": {
           "scan_interval": "Polling interval",
           "poll_snapshot": "Also poll /api/snapshot for power and energy readings",
-          "enable_controls": "Enable battery controls (switches, stop buttons, duration)",
-          "force_minutes": "Default force action duration",
+          "enable_controls": "Enable battery controls (switches, pause, stop buttons, duration)",
           "confirm_timeout": "Command readback timeout (0 disables confirmation polling)",
           "dashboard_port": "Dashboard port (used for the device's 'Visit' link)"
         }
@@ -72,6 +71,12 @@
       "schedule_export": { "name": "Export schedule" },
       "schedule_demand_discharge": { "name": "Demand discharge schedule" },
       "charging_mode": { "name": "Charging mode" },
+      "cosy_phase": { "name": "Cosy phase" },
+      "agile_phase": { "name": "Agile phase" },
+      "adaptive_phase": { "name": "Adaptive Charge phase" },
+      "calibration_phase": { "name": "Calibration phase" },
+      "maintenance_phase": { "name": "Maintenance phase" },
+      "battery_power_cutoff": { "name": "Battery power cutoff" },
       "condition_count": { "name": "Condition count" },
       "conditions": { "name": "Conditions" },
       "condition_codes": { "name": "Condition codes" },
@@ -84,9 +89,14 @@
       "charge_rate": { "name": "Charge rate (raw)" },
       "discharge_rate": { "name": "Discharge rate (raw)" },
       "battery_soc": { "name": "Battery" },
+      "battery_state": { "name": "Battery state" },
       "solar_power": { "name": "Solar power" },
       "battery_power": { "name": "Battery power" },
       "grid_power": { "name": "Grid power" },
+      "grid_import_power": { "name": "Grid import power" },
+      "grid_export_power": { "name": "Grid export power" },
+      "battery_charge_power": { "name": "Battery charge power" },
+      "battery_discharge_power": { "name": "Battery discharge power" },
       "home_power": { "name": "Home power" },
       "battery_temperature": { "name": "Battery temperature" },
       "inverter_temperature": { "name": "Inverter temperature" },
@@ -108,6 +118,7 @@
       "has_conditions": { "name": "Conditions present" },
       "force_charge_active": { "name": "Force charge active" },
       "force_discharge_active": { "name": "Force discharge active" },
+      "pause_active": { "name": "Battery pause active" },
       "charge_schedule_active": { "name": "Charge schedule active" },
       "export_schedule_active": { "name": "Export schedule active" },
       "charging": { "name": "Battery charging" },
@@ -119,7 +130,19 @@
     },
     "button": {
       "stop_force_charge": { "name": "Stop force charge" },
-      "stop_force_discharge": { "name": "Stop force discharge" }
+      "stop_force_discharge": { "name": "Stop force discharge" },
+      "stop_pause": { "name": "Stop battery pause" }
+    },
+    "select": {
+      "pause_mode": {
+        "name": "Battery pause",
+        "state": {
+          "off": "Off",
+          "charge": "Pause charging",
+          "discharge": "Pause discharging",
+          "both": "Pause charging and discharging"
+        }
+      }
     },
     "number": {
       "force_minutes": { "name": "Force action duration" }
@@ -173,6 +196,63 @@
           "description": "Which Home Energy Manager install to command."
         }
       }
+    },
+    "pause_battery": {
+      "name": "Pause battery",
+      "description": "Pause battery charging, discharging or both using the inverter's native pause. Changes real battery operation immediately; stopping restores the previous settings.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Home Energy Manager",
+          "description": "Which Home Energy Manager install to command."
+        },
+        "mode": {
+          "name": "Mode",
+          "description": "What to pause."
+        },
+        "minutes": {
+          "name": "Minutes",
+          "description": "Length of the pause, 1 to 1439."
+        }
+      }
+    },
+    "stop_battery_pause": {
+      "name": "Stop battery pause",
+      "description": "Stop an active battery pause and restore the settings from before it.",
+      "fields": {
+        "config_entry_id": {
+          "name": "Home Energy Manager",
+          "description": "Which Home Energy Manager install to command."
+        }
+      }
+    }
+  },
+  "selector": {
+    "pause_mode": {
+      "options": {
+        "charge": "Pause charging",
+        "discharge": "Pause discharging",
+        "both": "Pause charging and discharging"
+      }
+    }
+  },
+  "exceptions": {
+    "unknown_entry": {
+      "message": "Unknown Home Energy Manager entry: {entry_id}"
+    },
+    "entry_not_loaded": {
+      "message": "Home Energy Manager entry {title} is not loaded"
+    },
+    "control_disabled": {
+      "message": "HEM refused to {command}: enable 'Allow battery control through the authenticated API' in Home Energy Manager settings ({error})"
+    },
+    "command_conflict": {
+      "message": "HEM refused to {command} because another battery action is running, the same action already is, or HEM has no inverter reading yet: {error}"
+    },
+    "command_failed": {
+      "message": "HEM could not {command}: {error}"
+    },
+    "command_unsupported": {
+      "message": "HEM reports that this inverter cannot {command}"
     }
   }
 }

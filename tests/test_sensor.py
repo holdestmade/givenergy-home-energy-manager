@@ -245,3 +245,183 @@ def test_window_remaining_is_whole_minutes(value: Any, expected: int | None) -> 
 
     assert result == expected
     assert result is None or isinstance(result, int)
+
+
+# --- sensors added from data HEM already sends --------------------------------
+
+# Shaped like HEM v0.84.0's real /api/snapshot and /api/control/status.
+FULL_SNAPSHOT: dict[str, Any] = {
+    "ok": True,
+    "soc": 64,
+    "battery_state": "charging",
+    "solar_power": 2100,
+    "battery_power": -1500,
+    "grid_power": 300,
+    "home_power": 900,
+    "grid_online": True,
+    "age_seconds": 4,
+}
+FULL_STATUS: dict[str, Any] = {
+    "ok": True,
+    "summary": "Eco — idle",
+    "stale_after_seconds": 60,
+    "automation": {
+        "charging_mode": "adaptive",
+        "cosy": {"enabled": False, "active": False, "phase": "off"},
+        "agile": {"enabled": True, "active": False, "phase": "waiting"},
+        "adaptive": {"enabled": True, "phase": "charging", "period": 2},
+    },
+    "calibration": {"supported": True, "stage": 0, "phase": "off"},
+    "maintenance": {"mode": 0, "phase": "standby"},
+    "limits": {"reserve_soc": 4, "battery_power_cutoff_percent": None},
+}
+PREFIX = "sensor.home_energy_manager_hem_local_"
+
+
+async def _setup(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    aioclient_mock: Any,
+    status: dict[str, Any],
+    snapshot: dict[str, Any],
+) -> None:
+    from .const import SNAPSHOT_URL, STATUS_URL
+
+    aioclient_mock.get(STATUS_URL, json=status)
+    aioclient_mock.get(SNAPSHOT_URL, json=snapshot)
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+
+async def test_the_new_sensors_read_the_real_payload_shapes(
+    hass: HomeAssistant, config_entry: MockConfigEntry, aioclient_mock: Any
+) -> None:
+    """Every new sensor, end to end from HEM's actual field names."""
+    await _setup(hass, config_entry, aioclient_mock, FULL_STATUS, FULL_SNAPSHOT)
+
+    expected = {
+        "battery_state": "Charging",
+        "cosy_phase": "Off",
+        "agile_phase": "Waiting",
+        "adaptive_charge_phase": "Charging",
+        "calibration_phase": "Off",
+        "maintenance_phase": "Standby",
+        # HEM: grid +300 W is exporting; battery -1500 W is charging.
+        "grid_import_power": "0.0",
+        "grid_export_power": "300.0",
+        "battery_charge_power": "1500.0",
+        "battery_discharge_power": "0.0",
+    }
+    for suffix, state in expected.items():
+        assert hass.states.get(f"{PREFIX}{suffix}").state == state, suffix
+
+
+@pytest.mark.parametrize(
+    ("grid", "battery", "imported", "exported", "charging", "discharging"),
+    [
+        (-2400, 800, 2400.0, 0.0, 0.0, 800.0),
+        (0, 0, 0.0, 0.0, 0.0, 0.0),
+        ("-12.5", "3", 12.5, 0.0, 0.0, 3.0),
+    ],
+)
+def test_the_split_power_sensors_only_ever_read_positive(
+    grid: Any,
+    battery: Any,
+    imported: float,
+    exported: float,
+    charging: float,
+    discharging: float,
+) -> None:
+    """HA's grid convention is import-positive; HEM's is export-positive."""
+    from custom_components.home_energy_manager.coordinator import HemData
+    from custom_components.home_energy_manager.sensor import SNAPSHOT_SENSORS
+
+    data = HemData(snapshot={"grid_power": grid, "battery_power": battery})
+    value = {d.key: d.value_fn(data) for d in SNAPSHOT_SENSORS}
+
+    assert value["grid_import_power"] == imported
+    assert value["grid_export_power"] == exported
+    assert value["battery_charge_power"] == charging
+    assert value["battery_discharge_power"] == discharging
+
+
+def test_the_split_power_sensors_need_their_source() -> None:
+    """No grid reading means no split sensor either, not a 0 W one."""
+    from custom_components.home_energy_manager.coordinator import HemData
+    from custom_components.home_energy_manager.sensor import SNAPSHOT_SENSORS
+
+    data = HemData(snapshot={"soc": 50})
+    for key in ("grid_import_power", "grid_export_power", "battery_charge_power"):
+        description = next(d for d in SNAPSHOT_SENSORS if d.key == key)
+        assert description.value_fn(data) is None
+
+
+async def test_the_power_cutoff_only_exists_where_hem_reports_it(
+    hass: HomeAssistant, config_entry: MockConfigEntry, aioclient_mock: Any
+) -> None:
+    """Three-phase models only: elsewhere HEM sends null, so no entity."""
+    from .const import SNAPSHOT_URL, STATUS_URL
+
+    await _setup(hass, config_entry, aioclient_mock, FULL_STATUS, FULL_SNAPSHOT)
+    assert hass.states.get(f"{PREFIX}battery_power_cutoff") is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(
+        STATUS_URL,
+        json={
+            **FULL_STATUS,
+            "limits": {"reserve_soc": 4, "battery_power_cutoff_percent": 20},
+        },
+    )
+    aioclient_mock.get(SNAPSHOT_URL, json=FULL_SNAPSHOT)
+    await config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(f"{PREFIX}battery_power_cutoff").state == "20"
+
+
+async def test_stale_snapshot_readings_go_unavailable(
+    hass: HomeAssistant, config_entry: MockConfigEntry, aioclient_mock: Any
+) -> None:
+    """HEM keeps serving its last reading after it loses the inverter.
+
+    Showing ten-minute-old power flows as current would be wrong, but the
+    snapshot age sensor is the one that says why, so it stays.
+    """
+    from homeassistant.const import STATE_UNAVAILABLE
+
+    await _setup(
+        hass,
+        config_entry,
+        aioclient_mock,
+        FULL_STATUS,
+        {**FULL_SNAPSHOT, "age_seconds": 600},
+    )
+
+    for suffix in ("battery", "solar_power", "grid_import_power", "battery_state"):
+        assert hass.states.get(f"{PREFIX}{suffix}").state == STATE_UNAVAILABLE, suffix
+    assert int(hass.states.get(f"{PREFIX}snapshot_age").state) >= 600
+    # Status sensors are not affected.
+    assert hass.states.get(f"{PREFIX}summary").state == "Eco — idle"
+
+
+async def test_a_fresh_reading_brings_them_back(
+    hass: HomeAssistant, config_entry: MockConfigEntry, aioclient_mock: Any
+) -> None:
+    """Staleness is judged on every update, not once."""
+    from .const import SNAPSHOT_URL, STATUS_URL
+
+    await _setup(
+        hass,
+        config_entry,
+        aioclient_mock,
+        FULL_STATUS,
+        {**FULL_SNAPSHOT, "age_seconds": 600},
+    )
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(STATUS_URL, json=FULL_STATUS)
+    aioclient_mock.get(SNAPSHOT_URL, json=FULL_SNAPSHOT)
+    await config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(f"{PREFIX}battery").state == "64"

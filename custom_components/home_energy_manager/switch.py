@@ -15,15 +15,16 @@ from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .const import ACTION_CHARGE, ACTION_DISCHARGE, CONF_ENABLE_CONTROLS
+from .const import (
+    ACTION_CHARGE,
+    ACTION_DISCHARGE,
+    CONF_ENABLE_CONTROLS,
+    OPTIMISTIC_SECONDS,
+)
 from .coordinator import HemCoordinator, quick_action_matches
 from .entity import HemEntity
 
 _LOGGER = logging.getLogger(__name__)
-
-# How long to trust our own optimistic state while the inverter is written to
-# and re-read. Readback typically lands well inside this.
-OPTIMISTIC_SECONDS = 180
 
 
 async def async_setup_entry(
@@ -57,6 +58,18 @@ class HemForceSwitch(HemEntity, SwitchEntity):
         )
         self._optimistic: bool | None = None
         self._optimistic_until: float = 0.0
+
+    @property
+    def available(self) -> bool:
+        """Return False when HEM says this inverter cannot do this action.
+
+        Unknown (HEM has not been able to tell yet) stays available and lets
+        HEM decide. Stopping stays possible from the stop button regardless.
+        """
+        return (
+            super().available
+            and self.coordinator.capabilities.get(f"force_{self._action}") is not False
+        )
 
     @property
     def is_on(self) -> bool | None:
