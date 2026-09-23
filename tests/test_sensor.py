@@ -193,3 +193,55 @@ async def test_snapshot_sensors_without_a_matching_key_are_skipped(
     assert hass.states.get("sensor.home_energy_manager_hem_local_solar_power") is None
     # Status sensors are unaffected.
     assert hass.states.get("sensor.home_energy_manager_hem_local_summary") is not None
+
+
+async def test_snapshot_sensors_are_added_once_their_key_turns_up(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    aioclient_mock: Any,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """HEM has no reading when it has just started, so wait for the keys.
+
+    Deciding once at setup left every snapshot sensor missing until a reload.
+    """
+    from .const import SNAPSHOT, SNAPSHOT_URL, STATUS, STATUS_URL
+
+    aioclient_mock.get(STATUS_URL, json=STATUS)
+    aioclient_mock.get(
+        SNAPSHOT_URL, json={"ok": False, "error": "No inverter data available yet"}
+    )
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    battery = "sensor.home_energy_manager_hem_local_battery"
+    assert hass.states.get(battery) is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(STATUS_URL, json=STATUS)
+    aioclient_mock.get(SNAPSHOT_URL, json=SNAPSHOT)
+    await config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(battery).state == "55"
+    # Keys HEM still does not report stay absent rather than stuck on unknown.
+    assert hass.states.get("sensor.home_energy_manager_hem_local_home_power") is None
+
+    # A later poll must not add the same entity again, which Home Assistant
+    # would reject as a duplicate unique id.
+    await config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+    assert "already exists" not in caplog.text
+
+
+@pytest.mark.parametrize(("value", "expected"), [(56, 56), (56.0, 56), (None, None)])
+def test_window_remaining_is_whole_minutes(value: Any, expected: int | None) -> None:
+    """HEM rounds the window up to whole minutes, so do not show "56.0"."""
+    from custom_components.home_energy_manager.coordinator import HemData
+    from custom_components.home_energy_manager.sensor import STATUS_SENSORS
+
+    description = next(d for d in STATUS_SENSORS if d.key == "remaining_minutes")
+    result = description.value_fn(HemData(status={"remaining_minutes": value}))
+
+    assert result == expected
+    assert result is None or isinstance(result, int)

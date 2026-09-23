@@ -3,4 +3,4 @@
 # pytest-homeassistant-custom-component pins the pytest, pytest-asyncio and
 # Home Assistant versions that belong together, so it is the only thing worth
 # pinning here. Bump it to test against a newer Home Assistant.
-pytest-homeassistant-custom-component==0.13.316
+pytest-homeassistant-custom-component==0.13.340

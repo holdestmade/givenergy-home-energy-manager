@@ -35,7 +35,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .coordinator import HemCoordinator, HemData, pick
-from .entity import HemEntity
+from .entity import HemEntity, async_add_snapshot_entities
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -183,11 +183,13 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="remaining_minutes",
         translation_key="remaining_minutes",
+        suggested_display_precision=0,
         icon="mdi:timer-sand",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
-        # Window time left, NOT time until the battery is full or empty.
-        value_fn=lambda d: _as_float(d.status.get("remaining_minutes")),
+        # Window time left, NOT time until the battery is full or empty. HEM
+        # rounds it up to whole minutes.
+        value_fn=lambda d: _as_int(d.status.get("remaining_minutes")),
     ),
     HemSensorDescription(
         key="quick_action",
@@ -639,24 +641,24 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         HemSensor(coordinator, description) for description in STATUS_SENSORS
     ]
+    entities.append(HemLastCommandSensor(coordinator))
+    async_add_entities(entities)
 
-    missing: list[str] = []
-    for description in SNAPSHOT_SENSORS:
-        if description.value_fn(data) is None:
-            missing.append(description.key)
-            continue
-        entities.append(HemSensor(coordinator, description))
-
+    missing = [d.key for d in SNAPSHOT_SENSORS if d.value_fn(data) is None]
     if missing:
         _LOGGER.debug(
-            "Skipping snapshot sensors with no matching key: %s. "
-            "Snapshot keys seen: %s",
+            "Snapshot sensors with no matching key yet: %s. Snapshot keys seen: "
+            "%s. Each is added once HEM reports its key",
             ", ".join(missing),
             sorted(data.snapshot) if data.snapshot else "(none)",
         )
-
-    entities.append(HemLastCommandSensor(coordinator))
-    async_add_entities(entities)
+    async_add_snapshot_entities(
+        entry,
+        coordinator,
+        SNAPSHOT_SENSORS,
+        lambda description: HemSensor(coordinator, description),
+        async_add_entities,
+    )
 
 
 class HemSensor(HemEntity, SensorEntity):

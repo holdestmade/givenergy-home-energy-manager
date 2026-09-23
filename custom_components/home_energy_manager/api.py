@@ -29,6 +29,15 @@ _LOGGER = logging.getLogger(__name__)
 REQUEST_TIMEOUT = ClientTimeout(total=10)
 
 
+def build_url(host: str, port: int, use_ssl: bool = False) -> str:
+    """Return the base URL for a host and port."""
+    scheme = "https" if use_ssl else "http"
+    # An IPv6 literal needs brackets in a URL, or its colons read as the port.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{scheme}://{host}:{port}"
+
+
 class HemError(Exception):
     """Base error for the HEM API."""
 
@@ -94,8 +103,7 @@ class HomeEnergyManagerApi:
         """Store connection details."""
         self._session = session
         self._api_key = api_key
-        scheme = "https" if use_ssl else "http"
-        self.base_url = f"{scheme}://{host}:{port}"
+        self.base_url = build_url(host, port, use_ssl)
 
     @staticmethod
     def new_idempotency_key() -> str:

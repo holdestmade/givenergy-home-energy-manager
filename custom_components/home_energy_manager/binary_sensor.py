@@ -17,7 +17,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from .const import ACTION_CHARGE, ACTION_DISCHARGE
 from .coordinator import HemCoordinator, HemData, pick, quick_action_matches
-from .entity import HemEntity
+from .entity import HemEntity, async_add_snapshot_entities
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -121,7 +121,13 @@ async def async_setup_entry(
         HemBinarySensor(coordinator, description)
         for description in BINARY_SENSORS
         if not description.from_snapshot
-        or description.value_fn(coordinator.data) is not None
+    )
+    async_add_snapshot_entities(
+        entry,
+        coordinator,
+        [description for description in BINARY_SENSORS if description.from_snapshot],
+        lambda description: HemBinarySensor(coordinator, description),
+        async_add_entities,
     )
 
 

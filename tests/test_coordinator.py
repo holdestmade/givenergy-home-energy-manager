@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from typing import Any
 from unittest.mock import AsyncMock, Mock, call, patch
 
@@ -43,11 +44,18 @@ def api() -> AsyncMock:
 
 
 @pytest.fixture
-def coordinator(
+async def coordinator(
     hass: HomeAssistant, config_entry: MockConfigEntry, api: AsyncMock
-) -> HemCoordinator:
-    """Return a coordinator wired to the API double."""
-    return HemCoordinator(hass, config_entry, api)
+) -> AsyncGenerator[HemCoordinator]:
+    """Return a coordinator wired to the API double.
+
+    Nothing unloads this entry, so shut the coordinator down here: a refresh
+    request leaves its debouncer timer behind otherwise, which newer Home
+    Assistant test harnesses fail as a lingering timer.
+    """
+    coordinator = HemCoordinator(hass, config_entry, api)
+    yield coordinator
+    await coordinator.async_shutdown()
 
 
 # --- pick ------------------------------------------------------------------
@@ -225,20 +233,60 @@ async def test_transient_snapshot_failure_holds_the_previous_snapshot(
 @pytest.mark.parametrize(
     "error", [HemConflictError("No snapshot yet"), HemConnectionError("timeout")]
 )
-async def test_transient_snapshot_failure_on_the_first_poll_fails_the_refresh(
+async def test_transient_snapshot_failure_on_the_first_poll_is_not_fatal(
     coordinator: HemCoordinator, api: AsyncMock, error: Exception
 ) -> None:
-    """The platforms choose their snapshot entities from the first poll.
+    """With nothing to hold yet, the snapshot is just empty for now.
 
-    An empty snapshot there would leave every one of them missing until the
-    entry is reloaded, so the refresh fails and setup retries instead.
+    The status is still worth showing, and the platforms add each snapshot
+    entity once its key turns up, so there is no reason to fail the poll.
     """
     api.async_get_snapshot.side_effect = error
 
-    with pytest.raises(UpdateFailed) as caught:
-        await coordinator._async_update_data()
+    await coordinator.async_refresh()
 
-    assert str(error) in str(caught.value)
+    assert coordinator.last_update_success
+    assert coordinator.data.status == STATUS
+    assert coordinator.data.snapshot == {}
+
+
+# What HEM actually answers before its first inverter reading: a 200, not a 409.
+NO_READING_YET: dict[str, Any] = {
+    "ok": False,
+    "error": "No inverter data available yet",
+    "observed_at": None,
+    "age_seconds": None,
+}
+
+
+async def test_a_snapshot_hem_does_not_have_yet_is_treated_as_none(
+    coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """ok:false carries no readings, so it must not become the snapshot."""
+    api.async_get_snapshot.return_value = NO_READING_YET
+
+    await coordinator.async_refresh()
+
+    assert coordinator.last_update_success
+    assert coordinator.data.snapshot == {}
+
+    # Once HEM has a reading, it is used as normal.
+    api.async_get_snapshot.return_value = SNAPSHOT
+    await coordinator.async_refresh()
+
+    assert coordinator.data.snapshot == SNAPSHOT
+
+
+async def test_a_later_snapshot_without_readings_holds_the_previous_one(
+    coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """ok:false after good data is held over like any other transient failure."""
+    await coordinator.async_refresh()
+    api.async_get_snapshot.return_value = NO_READING_YET
+
+    await coordinator.async_refresh()
+
+    assert coordinator.data.snapshot == SNAPSHOT
 
 
 async def test_snapshot_polling_can_be_switched_off(
@@ -348,6 +396,79 @@ async def test_other_stop_failures_are_wrapped(
         await coordinator.async_stop(ACTION_CHARGE)
 
     assert "Stop force charge failed" in str(caught.value)
+
+
+@pytest.mark.parametrize(
+    ("send", "method", "args"),
+    [
+        (lambda c: c.async_force(ACTION_CHARGE, 30), "async_force_charge", (30,)),
+        (lambda c: c.async_stop(ACTION_DISCHARGE), "async_stop_force_discharge", ()),
+    ],
+    ids=["start", "stop"],
+)
+async def test_a_lost_reply_is_retried_with_the_same_key(
+    coordinator: HemCoordinator, api: AsyncMock, send: Any, method: str, args: tuple
+) -> None:
+    """HEM may have queued it, so only a same-key retry is safe.
+
+    A fresh key would be a second command replacing the first's restore point;
+    the same key makes HEM replay its original answer.
+    """
+    getattr(api, method).side_effect = [
+        HemConnectionError("timeout"),
+        {"command_id": "abc-123"},
+    ]
+    coordinator._confirm_timeout = 0
+
+    assert await send(coordinator) == "abc-123"
+
+    assert getattr(api, method).await_args_list == [
+        call(*args, "key-1"),
+        call(*args, "key-1"),
+    ]
+    api.new_idempotency_key.assert_called_once()
+    assert coordinator.last_command_id == "abc-123"
+
+
+async def test_a_retry_that_finds_the_first_attempt_in_progress_follows_it(
+    coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """HEM answers 409 with the command id while the key is still in flight."""
+    api.async_force_charge.side_effect = [
+        HemConnectionError("timeout"),
+        HemConflictError(
+            "A request with this Idempotency-Key is still in progress", "abc-123"
+        ),
+    ]
+    coordinator._confirm_timeout = 0
+
+    assert await coordinator.async_force(ACTION_CHARGE, 30) == "abc-123"
+    assert coordinator.last_command_id == "abc-123"
+
+
+async def test_a_command_that_cannot_be_delivered_is_retried_only_once(
+    coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """A HEM that is really down is reported, not hammered."""
+    api.async_force_charge.side_effect = HemConnectionError("unreachable")
+
+    with pytest.raises(HomeAssistantError, match="Force charge failed"):
+        await coordinator.async_force(ACTION_CHARGE, 30)
+
+    assert api.async_force_charge.await_count == 2
+
+
+async def test_a_conflict_on_the_first_attempt_is_not_mistaken_for_a_retry(
+    coordinator: HemCoordinator, api: AsyncMock
+) -> None:
+    """Only a retry's 409 means "yours is in progress"; a first 409 is a refusal."""
+    api.async_force_charge.side_effect = HemConflictError("already running", "old-1")
+
+    with pytest.raises(HomeAssistantError):
+        await coordinator.async_force(ACTION_CHARGE, 30)
+
+    assert api.async_force_charge.await_count == 1
+    assert coordinator.last_command_id is None
 
 
 async def test_a_command_without_confirmation_just_refreshes(

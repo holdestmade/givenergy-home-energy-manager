@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
+from functools import partial
 from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
@@ -17,6 +19,7 @@ from homeassistant.helpers.update_coordinator import DataUpdateCoordinator, Upda
 from .api import (
     HemAuthError,
     HemConflictError,
+    HemConnectionError,
     HemError,
     HemNotFoundError,
     HemPermissionError,
@@ -146,8 +149,13 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
 
         snapshot: dict[str, Any] = {}
         if self._poll_snapshot and self._snapshot_available:
+            # Hold the last good snapshot through anything transient rather
+            # than blanking every snapshot sensor. With no previous one the
+            # snapshot entities simply do not exist yet: the platforms add
+            # each one the first time its key resolves.
+            previous = self.data.snapshot if self.data is not None else {}
             try:
-                snapshot = await self.api.async_get_snapshot()
+                fetched = await self.api.async_get_snapshot()
             except HemAuthError as err:
                 raise ConfigEntryAuthFailed(str(err)) from err
             except (HemNotFoundError, HemPermissionError) as err:
@@ -160,27 +168,24 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
                 )
                 self._snapshot_available = False
             except HemError as err:
-                # Transient: a timeout, a rate limit, a 5xx, or a 409 because
-                # HEM has not taken a snapshot yet.
-                if self.data is None:
-                    # The platforms choose their snapshot entities from the
-                    # first poll, so an empty snapshot here would leave every
-                    # one of them missing until the entry is reloaded. Fail
-                    # the refresh instead: async_config_entry_first_refresh
-                    # turns that into ConfigEntryNotReady and setup retries.
-                    raise UpdateFailed(
-                        f"Snapshot not available on the first poll ({err}); "
-                        "retrying setup. Turn off snapshot polling to load "
-                        "without it"
-                    ) from err
-                # Hold the last good snapshot rather than blanking every
-                # snapshot sensor, and try again on the next poll.
-                snapshot = self.data.snapshot
+                # Transient: a timeout, a rate limit or a 5xx.
+                snapshot = previous
                 _LOGGER.debug(
                     "Snapshot fetch failed, holding the previous snapshot "
                     "until the next poll: %s",
                     err,
                 )
+            else:
+                if fetched.get("ok") is False:
+                    # HEM answers 200 {"ok": false, "error": ...} with no
+                    # readings at all until it has its first inverter reading.
+                    snapshot = previous
+                    _LOGGER.debug(
+                        "HEM has no snapshot yet (%s), trying again next poll",
+                        fetched.get("error"),
+                    )
+                else:
+                    snapshot = fetched
 
         _LOGGER.debug("HEM status=%s snapshot=%s", status, snapshot)
         return HemData(status=status, snapshot=snapshot)
@@ -194,13 +199,14 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
         and a second start replaces the restore point, so serialising here
         avoids generating that situation from Home Assistant itself.
         """
+        start = (
+            self.api.async_force_charge
+            if action == ACTION_CHARGE
+            else self.api.async_force_discharge
+        )
         async with self._command_lock:
-            key = self.api.new_idempotency_key()
             try:
-                if action == ACTION_CHARGE:
-                    result = await self.api.async_force_charge(minutes, key)
-                else:
-                    result = await self.api.async_force_discharge(minutes, key)
+                result = await self._async_send(partial(start, minutes))
             except HemPermissionError as err:
                 raise HomeAssistantError(
                     "HEM refused the command: enable 'Allow battery control through "
@@ -218,17 +224,43 @@ class HemCoordinator(DataUpdateCoordinator[HemData]):
 
     async def async_stop(self, action: str) -> str | None:
         """Stop a force action and return its command id."""
+        stop = (
+            self.api.async_stop_force_charge
+            if action == ACTION_CHARGE
+            else self.api.async_stop_force_discharge
+        )
         async with self._command_lock:
-            key = self.api.new_idempotency_key()
             try:
-                if action == ACTION_CHARGE:
-                    result = await self.api.async_stop_force_charge(key)
-                else:
-                    result = await self.api.async_stop_force_discharge(key)
+                result = await self._async_send(stop)
             except HemError as err:
                 raise HomeAssistantError(f"Stop force {action} failed: {err}") from err
 
             return await self._async_track(result, f"stop_force_{action}")
+
+    async def _async_send(
+        self, send: Callable[[str], Awaitable[dict[str, Any]]]
+    ) -> dict[str, Any]:
+        """Send one command, retrying once with the same key if the reply is lost.
+
+        HEM can queue a command and still fail to answer in time, so a timeout
+        does not mean it was refused. Sending it again under a fresh key would
+        be a second command that replaces the first one's restore point; the
+        HEM docs say to retry with the *same* key instead, which replays the
+        original answer rather than queuing anything.
+        """
+        key = self.api.new_idempotency_key()
+        try:
+            return await send(key)
+        except HemConnectionError as err:
+            _LOGGER.debug("No answer to command (%s), retrying with its key", err)
+        try:
+            return await send(key)
+        except HemConflictError as err:
+            # The first attempt is still being processed under this key, so
+            # that command is the one to follow.
+            if err.command_id:
+                return {"command_id": err.command_id}
+            raise
 
     async def _async_track(self, result: dict[str, Any], label: str) -> str | None:
         """Record the accepted command and start readback confirmation."""

@@ -86,20 +86,33 @@ async def test_an_unreachable_hem_is_retried(
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_a_hem_with_no_snapshot_yet_is_retried(
+async def test_a_hem_with_no_reading_yet_still_loads(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     aioclient_mock: AiohttpClientMocker,
 ) -> None:
-    """Snapshot entities are chosen at setup, so wait until HEM can supply one."""
+    """HEM answers 200 {"ok": false} until its first inverter reading.
+
+    That is the normal state when HEM and Home Assistant start together, and
+    the status entities are exactly what is worth seeing then.
+    """
     aioclient_mock.get(STATUS_URL, json=STATUS)
-    aioclient_mock.get(SNAPSHOT_URL, status=409, json={"error": "No snapshot yet"})
+    aioclient_mock.get(
+        SNAPSHOT_URL,
+        json={
+            "ok": False,
+            "error": "No inverter data available yet",
+            "observed_at": None,
+            "age_seconds": None,
+        },
+    )
 
     await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert config_entry.state is ConfigEntryState.SETUP_RETRY
-    assert "No snapshot yet" in (config_entry.reason or "")
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.data.snapshot == {}
+    assert hass.states.get("sensor.home_energy_manager_hem_local_summary") is not None
 
 
 async def test_changing_options_reloads_the_entry(

@@ -99,8 +99,8 @@ two stop buttons, and `number.force_action_duration`.
 HEM documents `/api/control/status` field by field, but `/api/snapshot` is only described
 as "power flows, state of charge, temperatures, grid readings and today's energy
 counters" — no published key list. So each snapshot sensor tries several candidate key
-names (`battery_soc`, `soc`, `battery.soc`, …) and the **entity is only created if a key
-actually resolves** during setup.
+names (`battery_soc`, `soc`, `battery.soc`, …) and the **entity is only created once a key
+actually resolves**.
 
 The key names below are confirmed against a diagnostics download from HEM and are tried
 first; the older guesses are kept behind them as fallbacks for other HEM builds.
@@ -124,18 +124,28 @@ If something you expect is still missing:
 Same caveat for units: the power sensors assume watts and the energy counters kWh. If
 your install reports kW, change `native_unit_of_measurement` on those descriptions.
 
-If `/api/snapshot` answers 403 or 404, snapshot polling switches itself off for the rest
-of that entry's life (reload the entry to probe again) and the integration carries on
-with the status sensors. A timeout, a 5xx or a 409 ("no snapshot yet") is treated as
-transient instead: the previous readings are held and the next poll retries. If that
-happens on the very first poll there are no readings to hold and the snapshot entities
-would never be created, so setup is retried until HEM can supply one (turn snapshot
-polling off to load without it).
+The power sensors keep HEM's own signs, which follow GivTCP: **battery power is
+positive when discharging** and negative when charging, and **grid power is positive
+when exporting** and negative when importing. Home Assistant's convention for grid power
+is the opposite (positive = import), so if you feed `grid_power` to something that
+expects HA's convention, negate it in a template sensor first.
+
+Until HEM has its first inverter reading (just after HEM starts, or while it is still
+connecting to the inverter), `/api/snapshot` answers `{"ok": false}` with no readings.
+The entry loads anyway, so the status sensors — including *Inverter online* — are
+available straight away, and each snapshot entity is added the first time its key
+appears. A timeout or a 5xx later on is treated as transient: the previous readings are
+held and the next poll retries. If `/api/snapshot` answers 403 or 404, snapshot polling
+switches itself off for the rest of that entry's life (reload the entry to probe again)
+and the integration carries on with the status sensors.
 
 ## How commands behave
 
 A POST returning 200 means HEM **accepted and queued** it, not that the inverter applied
-it. Each command gets a fresh `Idempotency-Key`, and the integration then polls
+it. Each command gets a fresh `Idempotency-Key`. If HEM does not answer in time the
+command may still have been queued, so it is retried once with the **same** key, which
+makes HEM replay its original answer rather than queue a second command (a second
+command would replace the first one's restore point). The integration then polls
 `GET /api/commands/{id}` in the background until `readback_confirmed` (or `failed` /
 `expired` / `unknown`, which are logged as warnings). `sensor.last_command_state` shows
 where that got to, with the command id as an attribute. Only the newest command is
@@ -173,7 +183,8 @@ automation:
 
 The test suite runs against a real Home Assistant, supplied by
 `pytest-homeassistant-custom-component`, which pins the Home Assistant, pytest
-and pytest-asyncio versions that belong together. Python 3.13 or newer:
+and pytest-asyncio versions that belong together. The current pin is Home
+Assistant 2026.6.4, which needs Python 3.14.2 or newer:
 
 ```bash
 python -m venv .venv && source .venv/bin/activate
