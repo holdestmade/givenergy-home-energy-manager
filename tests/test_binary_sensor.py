@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any
 
 import pytest
-from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNKNOWN
+from homeassistant.const import STATE_OFF, STATE_ON, STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import HomeAssistant
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -102,6 +102,21 @@ def test_charging_reports_observed_activity(
 
 
 @pytest.mark.parametrize(
+    ("quick_action", "expected"),
+    [
+        ({"action": "pause_mode", "mode": 1, "phase": "active"}, True),
+        ({"action": "pause_mode", "mode": 3, "phase": "pending"}, True),
+        ({"action": "pause_mode", "mode": 1, "phase": "restoring"}, False),
+        ({"action": "force_charge", "phase": "active"}, False),
+        (None, False),
+    ],
+)
+def test_pause_active(quick_action: Any, expected: bool) -> None:
+    """Any running native pause, but not one a stop is already undoing."""
+    assert _value("pause_active", {"quick_action": quick_action}) is expected
+
+
+@pytest.mark.parametrize(
     ("snapshot", "expected"),
     [
         ({"grid_online": True}, True),
@@ -170,3 +185,56 @@ async def test_binary_sensors_reflect_the_payload(
     assert states.get(f"{prefix}grid_online").state == STATE_ON
     assert states.get(f"{prefix}force_charge_active").state == STATE_OFF
     assert states.get(f"{prefix}stale_reading").state != STATE_UNKNOWN
+
+
+async def test_snapshot_backed_sensor_is_added_once_its_key_turns_up(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Grid online arrives with HEM's first reading, not necessarily at setup."""
+    from .const import SNAPSHOT_URL, STATUS, STATUS_URL
+
+    entity_id = "binary_sensor.home_energy_manager_hem_local_grid_online"
+    aioclient_mock.get(STATUS_URL, json=STATUS)
+    aioclient_mock.get(
+        SNAPSHOT_URL, json={"ok": False, "error": "No inverter data available yet"}
+    )
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+    assert hass.states.get(entity_id) is None
+
+    aioclient_mock.clear_requests()
+    aioclient_mock.get(STATUS_URL, json=STATUS)
+    aioclient_mock.get(SNAPSHOT_URL, json={"grid_online": False})
+    await config_entry.runtime_data.async_refresh()
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state == STATE_OFF
+
+
+async def test_grid_online_goes_unavailable_when_the_reading_is_stale(
+    hass: HomeAssistant,
+    config_entry: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """HEM keeps serving its last reading after it loses the inverter.
+
+    A grid state from ten minutes ago must not read as the grid state now.
+    """
+    from .const import SNAPSHOT_URL, STATUS, STATUS_URL
+
+    entity_id = "binary_sensor.home_energy_manager_hem_local_grid_online"
+    aioclient_mock.get(STATUS_URL, json={**STATUS, "stale_after_seconds": 60})
+    aioclient_mock.get(SNAPSHOT_URL, json={"grid_online": True, "age_seconds": 600})
+    await hass.config_entries.async_setup(config_entry.entry_id)
+    await hass.async_block_till_done()
+
+    assert hass.states.get(entity_id).state == STATE_UNAVAILABLE
+    # Status-backed sensors are not affected.
+    assert (
+        hass.states.get(
+            "binary_sensor.home_energy_manager_hem_local_inverter_online"
+        ).state
+        != STATE_UNAVAILABLE
+    )

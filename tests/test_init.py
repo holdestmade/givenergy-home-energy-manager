@@ -9,7 +9,7 @@ import voluptuous as vol
 from homeassistant.config_entries import ConfigEntryState
 from homeassistant.const import CONF_API_KEY, CONF_HOST
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ServiceValidationError
+from homeassistant.exceptions import HomeAssistantError, ServiceValidationError
 from homeassistant.helpers import device_registry as dr
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 from pytest_homeassistant_custom_component.test_util.aiohttp import AiohttpClientMocker
@@ -19,14 +19,17 @@ from custom_components.home_energy_manager.const import (
     ACTION_DISCHARGE,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_MINUTES,
+    ATTR_MODE,
     DOMAIN,
     SERVICE_FORCE_CHARGE,
     SERVICE_FORCE_DISCHARGE,
+    SERVICE_PAUSE_BATTERY,
+    SERVICE_STOP_BATTERY_PAUSE,
     SERVICE_STOP_FORCE_CHARGE,
     SERVICE_STOP_FORCE_DISCHARGE,
 )
 
-from .const import SNAPSHOT_URL, STATUS, STATUS_URL
+from .const import BASE_URL, SNAPSHOT_URL, STATUS, STATUS_URL
 
 
 async def test_setup_and_unload(
@@ -86,20 +89,33 @@ async def test_an_unreachable_hem_is_retried(
     assert config_entry.state is ConfigEntryState.SETUP_RETRY
 
 
-async def test_a_hem_with_no_snapshot_yet_is_retried(
+async def test_a_hem_with_no_reading_yet_still_loads(
     hass: HomeAssistant,
     config_entry: MockConfigEntry,
     aioclient_mock: AiohttpClientMocker,
 ) -> None:
-    """Snapshot entities are chosen at setup, so wait until HEM can supply one."""
+    """HEM answers 200 {"ok": false} until its first inverter reading.
+
+    That is the normal state when HEM and Home Assistant start together, and
+    the status entities are exactly what is worth seeing then.
+    """
     aioclient_mock.get(STATUS_URL, json=STATUS)
-    aioclient_mock.get(SNAPSHOT_URL, status=409, json={"error": "No snapshot yet"})
+    aioclient_mock.get(
+        SNAPSHOT_URL,
+        json={
+            "ok": False,
+            "error": "No inverter data available yet",
+            "observed_at": None,
+            "age_seconds": None,
+        },
+    )
 
     await hass.config_entries.async_setup(config_entry.entry_id)
     await hass.async_block_till_done()
 
-    assert config_entry.state is ConfigEntryState.SETUP_RETRY
-    assert "No snapshot yet" in (config_entry.reason or "")
+    assert config_entry.state is ConfigEntryState.LOADED
+    assert config_entry.runtime_data.data.snapshot == {}
+    assert hass.states.get("sensor.home_energy_manager_hem_local_summary") is not None
 
 
 async def test_changing_options_reloads_the_entry(
@@ -193,17 +209,94 @@ async def test_the_service_schema_enforces_the_api_range(
         )
 
 
+async def test_the_pause_services_reach_the_coordinator(
+    hass: HomeAssistant, init_integration: MockConfigEntry
+) -> None:
+    """The pause service takes its own mode and duration."""
+    coordinator = init_integration.runtime_data
+    with (
+        patch.object(coordinator, "async_pause", AsyncMock()) as pause,
+        patch.object(coordinator, "async_stop_pause", AsyncMock()) as stop,
+    ):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_PAUSE_BATTERY,
+            {
+                ATTR_CONFIG_ENTRY_ID: init_integration.entry_id,
+                ATTR_MODE: "discharge",
+                ATTR_MINUTES: 20,
+            },
+            blocking=True,
+        )
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_STOP_BATTERY_PAUSE,
+            {ATTR_CONFIG_ENTRY_ID: init_integration.entry_id},
+            blocking=True,
+        )
+
+    pause.assert_awaited_once_with("discharge", 20)
+    stop.assert_awaited_once_with()
+
+
+@pytest.mark.parametrize("mode", ["pause_charge", "off", "", "CHARGE"])
+async def test_the_pause_service_only_takes_hem_modes(
+    hass: HomeAssistant, init_integration: MockConfigEntry, mode: str
+) -> None:
+    """Off is a stop, not a mode; anything else would be a 400 from HEM."""
+    with pytest.raises(vol.Invalid):
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_PAUSE_BATTERY,
+            {
+                ATTR_CONFIG_ENTRY_ID: init_integration.entry_id,
+                ATTR_MODE: mode,
+                ATTR_MINUTES: 20,
+            },
+            blocking=True,
+        )
+
+
 async def test_an_unknown_entry_id_is_reported_to_the_user(
     hass: HomeAssistant, init_integration: MockConfigEntry
 ) -> None:
     """A stale entry id in an automation should say so, not raise a traceback."""
-    with pytest.raises(ServiceValidationError):
+    with pytest.raises(ServiceValidationError) as caught:
         await hass.services.async_call(
             DOMAIN,
             SERVICE_STOP_FORCE_CHARGE,
             {ATTR_CONFIG_ENTRY_ID: "does-not-exist"},
             blocking=True,
         )
+
+    assert str(caught.value) == "Unknown Home Energy Manager entry: does-not-exist"
+
+
+async def test_a_refused_command_explains_the_hem_toggle(
+    hass: HomeAssistant,
+    init_integration: MockConfigEntry,
+    aioclient_mock: AiohttpClientMocker,
+) -> None:
+    """Through a real service call, the translated message is what users see."""
+    aioclient_mock.post(
+        f"{BASE_URL}/api/control/force-charge",
+        status=403,
+        json={"ok": False, "error": "External battery control is disabled"},
+    )
+
+    with pytest.raises(HomeAssistantError) as caught:
+        await hass.services.async_call(
+            DOMAIN,
+            SERVICE_FORCE_CHARGE,
+            {ATTR_CONFIG_ENTRY_ID: init_integration.entry_id, ATTR_MINUTES: 30},
+            blocking=True,
+        )
+
+    assert str(caught.value) == (
+        "HEM refused to start Force Charge: enable 'Allow battery control through "
+        "the authenticated API' in Home Energy Manager settings (External battery "
+        "control is disabled)"
+    )
 
 
 async def test_an_unloaded_entry_is_reported_to_the_user(
@@ -241,3 +334,5 @@ async def test_diagnostics_redact_the_key_and_host(
     assert result["status"] == STATUS
     # The snapshot key list is the point of the download.
     assert "battery_soc" in result["snapshot_keys"]
+    assert result["capabilities"] == {}
+    assert result["snapshot_stale"] is False

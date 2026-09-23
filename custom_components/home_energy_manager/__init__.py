@@ -25,12 +25,16 @@ from .const import (
     ACTION_DISCHARGE,
     ATTR_CONFIG_ENTRY_ID,
     ATTR_MINUTES,
+    ATTR_MODE,
     CONF_USE_SSL,
     DOMAIN,
     MAX_FORCE_MINUTES,
     MIN_FORCE_MINUTES,
+    PAUSE_MODES,
     SERVICE_FORCE_CHARGE,
     SERVICE_FORCE_DISCHARGE,
+    SERVICE_PAUSE_BATTERY,
+    SERVICE_STOP_BATTERY_PAUSE,
     SERVICE_STOP_FORCE_CHARGE,
     SERVICE_STOP_FORCE_DISCHARGE,
 )
@@ -44,6 +48,7 @@ PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
     Platform.BUTTON,
     Platform.NUMBER,
+    Platform.SELECT,
     Platform.SENSOR,
     Platform.SWITCH,
 ]
@@ -54,6 +59,7 @@ _MINUTES_SCHEMA = {
         vol.Coerce(int), vol.Range(min=MIN_FORCE_MINUTES, max=MAX_FORCE_MINUTES)
     )
 }
+_MODE_SCHEMA = {vol.Required(ATTR_MODE): vol.In(PAUSE_MODES)}
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -95,7 +101,7 @@ async def _async_reload_entry(hass: HomeAssistant, entry: ConfigEntry) -> None:
 
 
 def _async_register_services(hass: HomeAssistant) -> None:
-    """Register the four control services."""
+    """Register the control services."""
     if hass.services.has_service(DOMAIN, SERVICE_FORCE_CHARGE):
         return
 
@@ -104,11 +110,17 @@ def _async_register_services(hass: HomeAssistant) -> None:
         entry = hass.config_entries.async_get_entry(entry_id)
         if entry is None or entry.domain != DOMAIN:
             raise ServiceValidationError(
-                f"Unknown Home Energy Manager entry: {entry_id}"
+                translation_domain=DOMAIN,
+                translation_key="unknown_entry",
+                translation_placeholders={"entry_id": entry_id},
             )
         coordinator = getattr(entry, "runtime_data", None)
         if coordinator is None:
-            raise ServiceValidationError(f"Entry {entry.title} is not loaded")
+            raise ServiceValidationError(
+                translation_domain=DOMAIN,
+                translation_key="entry_not_loaded",
+                translation_placeholders={"title": entry.title},
+            )
         return coordinator
 
     async def _force_charge(call: ServiceCall) -> None:
@@ -122,6 +134,14 @@ def _async_register_services(hass: HomeAssistant) -> None:
 
     async def _stop_discharge(call: ServiceCall) -> None:
         await _coordinator(call).async_stop(ACTION_DISCHARGE)
+
+    async def _pause(call: ServiceCall) -> None:
+        await _coordinator(call).async_pause(
+            call.data[ATTR_MODE], call.data[ATTR_MINUTES]
+        )
+
+    async def _stop_pause(call: ServiceCall) -> None:
+        await _coordinator(call).async_stop_pause()
 
     hass.services.async_register(
         DOMAIN,
@@ -145,5 +165,17 @@ def _async_register_services(hass: HomeAssistant) -> None:
         DOMAIN,
         SERVICE_STOP_FORCE_DISCHARGE,
         _stop_discharge,
+        schema=vol.Schema(_ENTRY_SCHEMA),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_PAUSE_BATTERY,
+        _pause,
+        schema=vol.Schema({**_ENTRY_SCHEMA, **_MODE_SCHEMA, **_MINUTES_SCHEMA}),
+    )
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_STOP_BATTERY_PAUSE,
+        _stop_pause,
         schema=vol.Schema(_ENTRY_SCHEMA),
     )

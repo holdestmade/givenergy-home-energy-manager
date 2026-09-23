@@ -9,6 +9,8 @@ Only the documented surface is implemented:
     POST /api/control/force-charge/stop
     POST /api/control/force-discharge         {"minutes": n}
     POST /api/control/force-discharge/stop
+    POST /api/control/pause-mode              {"mode": m, "minutes": n}
+    POST /api/control/pause-mode/stop
 
 Every POST carries an Idempotency-Key. Per the HEM docs a retry is only safe
 with the *same* key and payload, so the caller owns key generation and the
@@ -27,6 +29,15 @@ from aiohttp import ClientError, ClientTimeout
 _LOGGER = logging.getLogger(__name__)
 
 REQUEST_TIMEOUT = ClientTimeout(total=10)
+
+
+def build_url(host: str, port: int, use_ssl: bool = False) -> str:
+    """Return the base URL for a host and port."""
+    scheme = "https" if use_ssl else "http"
+    # An IPv6 literal needs brackets in a URL, or its colons read as the port.
+    if ":" in host and not host.startswith("["):
+        host = f"[{host}]"
+    return f"{scheme}://{host}:{port}"
 
 
 class HemError(Exception):
@@ -94,8 +105,7 @@ class HomeEnergyManagerApi:
         """Store connection details."""
         self._session = session
         self._api_key = api_key
-        scheme = "https" if use_ssl else "http"
-        self.base_url = f"{scheme}://{host}:{port}"
+        self.base_url = build_url(host, port, use_ssl)
 
     @staticmethod
     def new_idempotency_key() -> str:
@@ -212,4 +222,21 @@ class HomeEnergyManagerApi:
         """Stop Force Discharge."""
         return await self._request(
             "POST", "/api/control/force-discharge/stop", idempotency_key=idempotency_key
+        )
+
+    async def async_pause(
+        self, mode: str, minutes: int, idempotency_key: str
+    ) -> dict[str, Any]:
+        """Start native battery pause: mode is charge, discharge or both."""
+        return await self._request(
+            "POST",
+            "/api/control/pause-mode",
+            json={"mode": mode, "minutes": int(minutes)},
+            idempotency_key=idempotency_key,
+        )
+
+    async def async_stop_pause(self, idempotency_key: str) -> dict[str, Any]:
+        """Stop native battery pause and restore the captured baseline."""
+        return await self._request(
+            "POST", "/api/control/pause-mode/stop", idempotency_key=idempotency_key
         )

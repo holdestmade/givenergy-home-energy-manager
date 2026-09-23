@@ -22,6 +22,7 @@ from custom_components.home_energy_manager.api import (
     HemRateLimitError,
     HemResponseError,
     HomeEnergyManagerApi,
+    build_url,
 )
 
 from .const import API_KEY, BASE_URL, HOST, PORT, SNAPSHOT_URL, STATUS, STATUS_URL
@@ -49,6 +50,20 @@ async def test_base_url_follows_ssl_flag(hass: HomeAssistant) -> None:
         ).base_url
         == f"https://{HOST}:{PORT}"
     )
+
+
+@pytest.mark.parametrize(
+    ("host", "expected"),
+    [
+        ("hem.local", "http://hem.local:7338"),
+        ("192.168.1.5", "http://192.168.1.5:7338"),
+        ("fd00::5", "http://[fd00::5]:7338"),
+        ("[fd00::5]", "http://[fd00::5]:7338"),
+    ],
+)
+def test_build_url_brackets_ipv6_literals(host: str, expected: str) -> None:
+    """Without brackets an IPv6 address's colons read as the port."""
+    assert build_url(host, 7338) == expected
 
 
 async def test_reads_send_the_bearer_key_and_no_idempotency_key(

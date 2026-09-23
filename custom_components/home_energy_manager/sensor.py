@@ -35,7 +35,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from .coordinator import HemCoordinator, HemData, pick
-from .entity import HemEntity
+from .entity import HemEntity, async_add_entities_when_reported
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -135,14 +135,51 @@ def _as_timestamp(value: Any) -> datetime | None:
     return dt_util.parse_datetime(str(value))
 
 
+def _grid_power(data: HemData) -> float | None:
+    """Return grid power in HEM's sign: positive exporting, negative importing."""
+    return _as_float(
+        pick(data.snapshot, "grid_power", "power.grid", "grid.power", "grid_w")
+    )
+
+
+def _battery_power(data: HemData) -> float | None:
+    """Return battery power in HEM's sign: positive discharging, negative charging."""
+    return _as_float(
+        pick(
+            data.snapshot,
+            "battery_power",
+            "power.battery",
+            "battery.power",
+            "battery_w",
+        )
+    )
+
+
+def _positive_part(value: float | None) -> float | None:
+    """Return a signed flow's positive side, zero when it runs the other way.
+
+    Split sensors like these are what energy flow cards and HA's own grid
+    convention (positive = import) expect, where HEM's signed values are not.
+    """
+    return None if value is None else max(0.0, value)
+
+
+def _negated(value: float | None) -> float | None:
+    """Flip a signed flow, so its negative side can go through _positive_part."""
+    return None if value is None else -value
+
+
 @dataclass(frozen=True, kw_only=True)
 class HemSensorDescription(SensorEntityDescription):
     """Sensor description with a value function."""
 
     value_fn: Callable[[HemData], Any]
     # Snapshot sensors are only created when their key actually resolves,
-    # because /api/snapshot has no published field list.
+    # because /api/snapshot has no published field list, and go unavailable
+    # when the reading is older than HEM's stale limit.
     from_snapshot: bool = False
+    # For the one snapshot sensor whose job is to report that age.
+    available_when_stale: bool = False
 
 
 # --- /api/control/status ----------------------------------------------------
@@ -183,11 +220,13 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
     HemSensorDescription(
         key="remaining_minutes",
         translation_key="remaining_minutes",
+        suggested_display_precision=0,
         icon="mdi:timer-sand",
         native_unit_of_measurement=UnitOfTime.MINUTES,
         state_class=SensorStateClass.MEASUREMENT,
-        # Window time left, NOT time until the battery is full or empty.
-        value_fn=lambda d: _as_float(d.status.get("remaining_minutes")),
+        # Window time left, NOT time until the battery is full or empty. HEM
+        # rounds it up to whole minutes.
+        value_fn=lambda d: _as_int(d.status.get("remaining_minutes")),
     ),
     HemSensorDescription(
         key="quick_action",
@@ -224,6 +263,38 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
         translation_key="charging_mode",
         icon="mdi:tune-variant",
         value_fn=lambda d: _pretty(pick(d.status, "automation.charging_mode")),
+    ),
+    HemSensorDescription(
+        key="cosy_phase",
+        translation_key="cosy_phase",
+        icon="mdi:home-clock-outline",
+        value_fn=lambda d: _pretty(pick(d.status, "automation.cosy.phase")),
+    ),
+    HemSensorDescription(
+        key="agile_phase",
+        translation_key="agile_phase",
+        icon="mdi:chart-bell-curve-cumulative",
+        value_fn=lambda d: _pretty(pick(d.status, "automation.agile.phase")),
+    ),
+    HemSensorDescription(
+        key="adaptive_phase",
+        translation_key="adaptive_phase",
+        icon="mdi:auto-mode",
+        value_fn=lambda d: _pretty(pick(d.status, "automation.adaptive.phase")),
+    ),
+    HemSensorDescription(
+        key="calibration_phase",
+        translation_key="calibration_phase",
+        icon="mdi:battery-sync",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _pretty(pick(d.status, "calibration.phase")),
+    ),
+    HemSensorDescription(
+        key="maintenance_phase",
+        translation_key="maintenance_phase",
+        icon="mdi:battery-heart-variant",
+        entity_category=EntityCategory.DIAGNOSTIC,
+        value_fn=lambda d: _pretty(pick(d.status, "maintenance.phase")),
     ),
     HemSensorDescription(
         key="condition_count",
@@ -348,6 +419,25 @@ STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
 )
 
 
+# Status fields only some inverter models report (null elsewhere), so these
+# are created the first time HEM gives them a value, like snapshot sensors.
+REPORTED_STATUS_SENSORS: tuple[HemSensorDescription, ...] = (
+    HemSensorDescription(
+        key="battery_power_cutoff",
+        translation_key="battery_power_cutoff",
+        suggested_display_precision=0,
+        icon="mdi:battery-off-outline",
+        native_unit_of_measurement=PERCENTAGE,
+        state_class=SensorStateClass.MEASUREMENT,
+        entity_category=EntityCategory.DIAGNOSTIC,
+        # Three-phase models only.
+        value_fn=lambda d: _as_int(
+            pick(d.status, "limits.battery_power_cutoff_percent")
+        ),
+    ),
+)
+
+
 # --- /api/snapshot ----------------------------------------------------------
 # The snapshot schema is not formally published, so each sensor lists candidate
 # key names and the first that exists wins. Entities are only created for keys
@@ -376,6 +466,14 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         ),
     ),
     HemSensorDescription(
+        key="battery_state",
+        translation_key="battery_state",
+        from_snapshot=True,
+        icon="mdi:battery-sync-outline",
+        # Idle, Charging or Discharging, from the battery's own power flow.
+        value_fn=lambda d: _pretty(d.snapshot.get("battery_state")),
+    ),
+    HemSensorDescription(
         key="solar_power",
         translation_key="solar_power",
         from_snapshot=True,
@@ -400,15 +498,7 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: _as_float(
-            pick(
-                d.snapshot,
-                "battery_power",
-                "power.battery",
-                "battery.power",
-                "battery_w",
-            )
-        ),
+        value_fn=_battery_power,
     ),
     HemSensorDescription(
         key="grid_power",
@@ -417,9 +507,43 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         device_class=SensorDeviceClass.POWER,
         native_unit_of_measurement=UnitOfPower.WATT,
         state_class=SensorStateClass.MEASUREMENT,
-        value_fn=lambda d: _as_float(
-            pick(d.snapshot, "grid_power", "power.grid", "grid.power", "grid_w")
-        ),
+        value_fn=_grid_power,
+    ),
+    HemSensorDescription(
+        key="grid_import_power",
+        translation_key="grid_import_power",
+        from_snapshot=True,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _positive_part(_negated(_grid_power(d))),
+    ),
+    HemSensorDescription(
+        key="grid_export_power",
+        translation_key="grid_export_power",
+        from_snapshot=True,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _positive_part(_grid_power(d)),
+    ),
+    HemSensorDescription(
+        key="battery_charge_power",
+        translation_key="battery_charge_power",
+        from_snapshot=True,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _positive_part(_negated(_battery_power(d))),
+    ),
+    HemSensorDescription(
+        key="battery_discharge_power",
+        translation_key="battery_discharge_power",
+        from_snapshot=True,
+        device_class=SensorDeviceClass.POWER,
+        native_unit_of_measurement=UnitOfPower.WATT,
+        state_class=SensorStateClass.MEASUREMENT,
+        value_fn=lambda d: _positive_part(_battery_power(d)),
     ),
     HemSensorDescription(
         key="home_power",
@@ -624,7 +748,10 @@ SNAPSHOT_SENSORS: tuple[HemSensorDescription, ...] = (
         native_unit_of_measurement=UnitOfTime.SECONDS,
         state_class=SensorStateClass.MEASUREMENT,
         entity_category=EntityCategory.DIAGNOSTIC,
-        value_fn=lambda d: _as_int(d.snapshot.get("age_seconds")),
+        available_when_stale=True,
+        # Live: HEM's age at the last answer plus the time since, so a held
+        # snapshot shows its real age rather than freezing.
+        value_fn=lambda d: _as_int(d.snapshot_age),
     ),
 )
 
@@ -639,24 +766,24 @@ async def async_setup_entry(
     entities: list[SensorEntity] = [
         HemSensor(coordinator, description) for description in STATUS_SENSORS
     ]
+    entities.append(HemLastCommandSensor(coordinator))
+    async_add_entities(entities)
 
-    missing: list[str] = []
-    for description in SNAPSHOT_SENSORS:
-        if description.value_fn(data) is None:
-            missing.append(description.key)
-            continue
-        entities.append(HemSensor(coordinator, description))
-
+    missing = [d.key for d in SNAPSHOT_SENSORS if d.value_fn(data) is None]
     if missing:
         _LOGGER.debug(
-            "Skipping snapshot sensors with no matching key: %s. "
-            "Snapshot keys seen: %s",
+            "Snapshot sensors with no matching key yet: %s. Snapshot keys seen: "
+            "%s. Each is added once HEM reports its key",
             ", ".join(missing),
             sorted(data.snapshot) if data.snapshot else "(none)",
         )
-
-    entities.append(HemLastCommandSensor(coordinator))
-    async_add_entities(entities)
+    async_add_entities_when_reported(
+        entry,
+        coordinator,
+        (*REPORTED_STATUS_SENSORS, *SNAPSHOT_SENSORS),
+        lambda description: HemSensor(coordinator, description),
+        async_add_entities,
+    )
 
 
 class HemSensor(HemEntity, SensorEntity):
@@ -670,6 +797,9 @@ class HemSensor(HemEntity, SensorEntity):
         """Store the description."""
         super().__init__(coordinator, description.key)
         self.entity_description = description
+        self._goes_stale = (
+            description.from_snapshot and not description.available_when_stale
+        )
 
     @property
     def native_value(self) -> Any:

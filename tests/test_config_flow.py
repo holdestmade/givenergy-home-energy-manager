@@ -78,6 +78,58 @@ async def test_the_port_is_stored_as_an_int(
 
 
 @pytest.mark.parametrize(
+    ("typed", "host", "use_ssl"),
+    [
+        ("  hem.local  ", "hem.local", False),
+        ("hem.local/", "hem.local", False),
+        ("http://hem.local", "hem.local", False),
+        # The dashboard URL is the one most likely to be pasted: its port is
+        # not the API's, so only the host is taken from it.
+        ("http://hem.local:7337/", "hem.local", False),
+        ("https://hem.example.com/", "hem.example.com", True),
+        ("http://[fd00::5]:7337", "fd00::5", False),
+        ("fd00::5", "fd00::5", False),
+    ],
+)
+async def test_a_pasted_address_is_tidied(
+    hass: HomeAssistant,
+    mock_setup_entry: AsyncMock,
+    typed: str,
+    host: str,
+    use_ssl: bool,
+) -> None:
+    """Spaces, a scheme or a path would otherwise make an unreachable URL."""
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+
+    with patch(VALIDATE):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {**USER_INPUT, CONF_HOST: typed}
+        )
+
+    assert result["data"][CONF_HOST] == host
+    assert result["data"][CONF_PORT] == PORT
+    assert result["data"].get("use_ssl", False) is use_ssl
+    assert result["result"].unique_id == f"{host}:{PORT}"
+
+
+async def test_reconfigure_tidies_a_pasted_address(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+) -> None:
+    """The same tidying applies when moving HEM."""
+    result = await config_entry.start_reconfigure_flow(hass)
+
+    with patch(VALIDATE):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {**USER_INPUT, CONF_HOST: " http://hem2.local/ "}
+        )
+
+    assert result["reason"] == "reconfigure_successful"
+    assert config_entry.data[CONF_HOST] == "hem2.local"
+
+
+@pytest.mark.parametrize(
     ("error", "expected"),
     [
         (HemAuthError("bad key"), "invalid_auth"),
@@ -173,6 +225,7 @@ async def test_reauth_replaces_the_key(
     [
         (HemAuthError("still bad"), "invalid_auth"),
         (HemConnectionError("unreachable"), "cannot_connect"),
+        (RuntimeError("boom"), "unknown"),
     ],
 )
 async def test_reauth_reports_errors(
@@ -303,6 +356,7 @@ async def test_reconfigure_accepts_the_same_address_again(
     [
         (HemConnectionError("unreachable"), "cannot_connect"),
         (HemAuthError("bad key"), "invalid_auth"),
+        (RuntimeError("boom"), "unknown"),
     ],
 )
 async def test_reconfigure_reports_a_bad_address(
@@ -338,7 +392,6 @@ async def test_options_are_stored_as_ints(
         CONF_SCAN_INTERVAL: 60.0,
         "poll_snapshot": True,
         "enable_controls": True,
-        CONF_FORCE_MINUTES: 90.0,
         CONF_CONFIRM_TIMEOUT: 30.0,
         CONF_DASHBOARD_PORT: 7337.0,
     }
@@ -347,14 +400,22 @@ async def test_options_are_stored_as_ints(
     )
 
     assert result["type"] is FlowResultType.CREATE_ENTRY
-    for key in (
-        CONF_SCAN_INTERVAL,
-        CONF_FORCE_MINUTES,
-        CONF_CONFIRM_TIMEOUT,
-        CONF_DASHBOARD_PORT,
-    ):
+    for key in (CONF_SCAN_INTERVAL, CONF_CONFIRM_TIMEOUT, CONF_DASHBOARD_PORT):
         assert isinstance(config_entry.options[key], int)
     assert config_entry.options[CONF_SCAN_INTERVAL] == 60
+
+
+async def test_the_duration_is_not_an_option(
+    hass: HomeAssistant, config_entry: MockConfigEntry, mock_setup_entry: AsyncMock
+) -> None:
+    """The duration number is the one control for it.
+
+    As an option it only ever seeded the number the first time: after that
+    the number's restored value always won, so changing it did nothing.
+    """
+    result = await hass.config_entries.options.async_init(config_entry.entry_id)
+
+    assert CONF_FORCE_MINUTES not in result["data_schema"].schema
 
 
 # --- validation ------------------------------------------------------------

@@ -47,7 +47,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           # Tracks the Python version the pinned Home Assistant supports.
-          python-version: "3.13"
+          python-version: "3.14"
           cache: pip
       - run: pip install -r requirements_test.txt
       - run: >-

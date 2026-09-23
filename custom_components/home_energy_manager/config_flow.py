@@ -20,7 +20,7 @@ from homeassistant.const import (
     CONF_SCAN_INTERVAL,
     CONF_VERIFY_SSL,
 )
-from homeassistant.core import callback
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -31,26 +31,23 @@ from homeassistant.helpers.selector import (
     TextSelectorConfig,
     TextSelectorType,
 )
+from yarl import URL
 
 from .api import HemAuthError, HemError, HomeEnergyManagerApi
 from .const import (
     CONF_CONFIRM_TIMEOUT,
     CONF_DASHBOARD_PORT,
     CONF_ENABLE_CONTROLS,
-    CONF_FORCE_MINUTES,
     CONF_POLL_SNAPSHOT,
     CONF_USE_SSL,
     DEFAULT_CONFIRM_TIMEOUT,
     DEFAULT_DASHBOARD_PORT,
-    DEFAULT_FORCE_MINUTES,
     DEFAULT_PORT,
     DEFAULT_SCAN_INTERVAL,
     DOMAIN,
     MAX_CONFIRM_TIMEOUT,
-    MAX_FORCE_MINUTES,
     MAX_SCAN_INTERVAL,
     MIN_CONFIRM_TIMEOUT,
-    MIN_FORCE_MINUTES,
     MIN_SCAN_INTERVAL,
 )
 
@@ -71,7 +68,32 @@ STEP_USER_SCHEMA = vol.Schema(
 )
 
 
-async def _async_validate(hass, data: dict[str, Any]) -> None:
+def _clean_address(user_input: dict[str, Any]) -> dict[str, Any]:
+    """Tidy a host that was typed with spaces or pasted as a URL.
+
+    A pasted URL gives up only its host: https:// also turns HTTPS on, since
+    that is plainly what was meant, but its port is ignored, because the URL
+    most likely to be pasted is the dashboard's (7337), not the API's.
+    """
+    host = str(user_input[CONF_HOST]).strip()
+    if "://" in host:
+        try:
+            url = URL(host)
+        except ValueError:
+            url = None
+        if url is not None and url.host:
+            if url.scheme == "https":
+                user_input[CONF_USE_SSL] = True
+            host = url.host
+    else:
+        # A bare host with a stray path or trailing slash; IPv6 has no "/".
+        host = host.split("/", 1)[0]
+    user_input[CONF_HOST] = host
+    user_input[CONF_PORT] = int(user_input[CONF_PORT])
+    return user_input
+
+
+async def _async_validate(hass: HomeAssistant, data: dict[str, Any]) -> None:
     """Raise if HEM cannot be reached or the key is rejected."""
     session = async_get_clientsession(hass, verify_ssl=data.get(CONF_VERIFY_SSL, True))
     api = HomeEnergyManagerApi(
@@ -98,7 +120,7 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
         errors: dict[str, str] = {}
 
         if user_input is not None:
-            user_input[CONF_PORT] = int(user_input[CONF_PORT])
+            user_input = _clean_address(user_input)
             await self.async_set_unique_id(
                 f"{user_input[CONF_HOST]}:{user_input[CONF_PORT]}"
             )
@@ -144,6 +166,9 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
                 errors["base"] = "invalid_auth"
             except HemError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001 - surface as a generic error
+                _LOGGER.exception("Unexpected error validating HEM")
+                errors["base"] = "unknown"
             else:
                 return self.async_update_reload_and_abort(entry, data_updates=data)
 
@@ -167,13 +192,16 @@ class HemConfigFlow(ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
 
         if user_input is not None:
-            user_input[CONF_PORT] = int(user_input[CONF_PORT])
+            user_input = _clean_address(user_input)
             try:
                 await _async_validate(self.hass, user_input)
             except HemAuthError:
                 errors["base"] = "invalid_auth"
             except HemError:
                 errors["base"] = "cannot_connect"
+            except Exception:  # noqa: BLE001 - surface as a generic error
+                _LOGGER.exception("Unexpected error validating HEM")
+                errors["base"] = "unknown"
             else:
                 # The unique id *is* the address, so moving HEM necessarily
                 # changes it. _abort_if_unique_id_mismatch() compares the new
@@ -217,12 +245,7 @@ class HemOptionsFlow(OptionsFlow):
         """Show and save the options."""
         if user_input is not None:
             # Selectors hand back floats; store ints so comparisons stay clean.
-            for key in (
-                CONF_SCAN_INTERVAL,
-                CONF_FORCE_MINUTES,
-                CONF_CONFIRM_TIMEOUT,
-                CONF_DASHBOARD_PORT,
-            ):
+            for key in (CONF_SCAN_INTERVAL, CONF_CONFIRM_TIMEOUT, CONF_DASHBOARD_PORT):
                 user_input[key] = int(user_input[key])
             return self.async_create_entry(title="", data=user_input)
 
@@ -248,18 +271,6 @@ class HemOptionsFlow(OptionsFlow):
                     CONF_ENABLE_CONTROLS,
                     default=options.get(CONF_ENABLE_CONTROLS, False),
                 ): BooleanSelector(),
-                vol.Required(
-                    CONF_FORCE_MINUTES,
-                    default=options.get(CONF_FORCE_MINUTES, DEFAULT_FORCE_MINUTES),
-                ): NumberSelector(
-                    NumberSelectorConfig(
-                        min=MIN_FORCE_MINUTES,
-                        max=MAX_FORCE_MINUTES,
-                        step=1,
-                        unit_of_measurement="min",
-                        mode=NumberSelectorMode.BOX,
-                    )
-                ),
                 vol.Required(
                     CONF_CONFIRM_TIMEOUT,
                     default=options.get(CONF_CONFIRM_TIMEOUT, DEFAULT_CONFIRM_TIMEOUT),
